@@ -1,2 +1,7 @@
+# Core dependencies for package metadata extraction
 requests>=2.28.0
 lxml>=4.9.0
+
+# Note: The GUI (gui_menu.py) requires tkinter, which is included 
+# with most Python installations by default. If tkinter is not 
+# available, you can still use the command-line interface.
