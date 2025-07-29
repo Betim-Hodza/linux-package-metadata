@@ -87,13 +87,14 @@ python3 gui_menu.py
 - ⏱️ **Estimated processing times** and package counts for each distribution
 - 🎮 **Start/Stop controls** for managing extractions
 - 📋 **Distribution information** showing package counts and processing time
+- 🔐 **Automatic signature verification** for all packages (enabled by default)
 
 **Usage:**
 1. Select desired Linux distributions using checkboxes
 2. Click "Start Extraction" to begin processing
 3. Monitor real-time progress in the log area
 4. Use "Stop All" to halt processing if needed
-5. Results are saved to `output/` directory as CSV files
+5. Results are saved to `output/` directory as CSV files with signature verification data
 
 ### Command Line Interface
 
@@ -153,10 +154,10 @@ python3 amazonlinux/parse_amazon_packages.py
 
 ## Output Format
 
-All CSV files follow the same format:
+All CSV files follow the same format with **signature verification columns**:
 
 ```csv
-package,version,sha256,sha512,component,architecture,deb_url,license,purl,release
+package,version,sha256,sha512,component,architecture,deb_url,license,purl,release,signature_verified,signature_method,signer
 ```
 
 ### Field Descriptions
@@ -171,12 +172,15 @@ package,version,sha256,sha512,component,architecture,deb_url,license,purl,releas
 - **license**: License information (normalized to SPDX identifiers when possible)
 - **purl**: Package URL following the PURL specification
 - **release**: Distribution release (e.g., jammy, bullseye, el8, fc39, etc.)
+- **signature_verified**: Digital signature verification status (`true`/`false`/`disabled`/`error`)
+- **signature_method**: Type of signature verification performed (e.g., `InRelease GPG signature`, `RPM GPG signature`)
+- **signer**: Entity that signed the package/repository (e.g., `Ubuntu Archive Automatic Signing Key`)
 
 ### Example Output
 
 ```csv
-package,version,sha256,sha512,component,architecture,deb_url,license,purl,release
-bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubuntu/pool/main/b/bash/bash_5.1-6ubuntu1_amd64.deb,GPL-3.0,pkg:deb/ubuntu/bash@5.1-6ubuntu1?arch=amd64&component=main,jammy
+package,version,sha256,sha512,component,architecture,deb_url,license,purl,release,signature_verified,signature_method,signer
+bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubuntu/pool/main/b/bash/bash_5.1-6ubuntu1_amd64.deb,GPL-3.0,pkg:deb/ubuntu/bash@5.1-6ubuntu1?arch=amd64&component=main,jammy,true,InRelease GPG signature,Ubuntu Archive Automatic Signing Key
 ```
 
 ## Output Locations
@@ -204,6 +208,27 @@ bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubunt
 - Support for different package types (deb, rpm, apk, alpm)
 - Proper namespace and qualifier handling
 
+### Digital Signature Verification
+- **Repository-level verification** for DEB/APK packages (InRelease files, .SIGN.RSA files)
+- **Package-level verification** for RPM/Arch packages (embedded GPG signatures, .sig files)
+- **Signature status tracking**: `true`/`false`/`disabled`/`error` in CSV output
+- **Verification method identification**: InRelease GPG, RPM GPG, APK RSA, Arch .sig signatures
+- **Signer identification**: Distribution signing keys and authorities
+- **Performance optimized**: Repository-level signatures cached to avoid repeated verification
+- **Configurable**: Can be enabled/disabled per parser for faster processing
+
+#### Signature Support by Distribution
+| Distribution | Signature Method | Verification Type | Signer |
+|--------------|------------------|-------------------|---------|
+| **Ubuntu** | InRelease GPG signature | Repository-level | Ubuntu Archive Automatic Signing Key |
+| **Debian** | InRelease GPG signature | Repository-level | Debian Archive Automatic Signing Key |
+| **Fedora** | RPM GPG signature | Package-level | Fedora Project |
+| **CentOS** | RPM GPG signature | Package-level | CentOS Project |
+| **Rocky Linux** | RPM GPG signature | Package-level | Rocky Linux |
+| **Amazon Linux** | RPM GPG signature | Package-level | Amazon Linux |
+| **Alpine Linux** | APK .SIGN.RSA signature | Repository-level | Alpine Linux Developer |
+| **Arch Linux** | Arch .sig file signature | Package-level | Arch Linux Developer |
+
 ### Parallel Processing
 - Downloads and processing run in parallel for faster execution
 - Configurable concurrency limits to avoid overwhelming servers
@@ -219,6 +244,33 @@ bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubunt
 
 - `CLEANUP_TEMP=false` - Disable temporary file cleanup (default: true)
 
+### Signature Verification Configuration
+
+**Signature verification is enabled by default** for enhanced security. To disable it:
+
+#### Method 1: Modify Parser Initialization
+```python
+# In any parse_*_packages.py file
+def main():
+    parser = UbuntuPackageParser(verify_signatures=False)  # Disable signatures
+    parser.process_all_packages()
+```
+
+#### Method 2: Environment Variable (Future Enhancement)
+```bash
+export VERIFY_SIGNATURES=false
+python3 ubuntu/parse_ubuntu_packages.py
+```
+
+**Performance Impact:**
+- **Enabled**: ~10-20% slower processing (due to signature verification)
+- **Disabled**: Faster processing, but reduced security assurance
+
+**When Disabled:**
+- `signature_verified: disabled`
+- `signature_method: signature verification disabled`
+- `signer: N/A`
+
 ### Customization
 
 You can modify the following in individual scripts:
@@ -227,6 +279,7 @@ You can modify the following in individual scripts:
 - **Components**: Modify component lists for different repository sections
 - **Architectures**: Add or remove target architectures
 - **Concurrency**: Adjust parallel job limits in download scripts
+- **Signature Verification**: Enable/disable per parser as needed
 
 ## Troubleshooting
 
@@ -282,9 +335,12 @@ PYTHON_LOG_LEVEL=DEBUG ./scripts/run_all.sh
 ### Security Considerations
 
 - All downloads use HTTPS where available
-- Package checksums are validated when present
+- **Digital signature verification** for package authenticity and integrity
+- Package checksums are validated when present (SHA256/SHA512)
+- **Multi-layer verification**: Signatures + checksums provide comprehensive validation
 - No code execution from downloaded content
 - Comprehensive input validation and sanitization
+- **Supply chain security**: Verifies packages are from legitimate distribution sources
 
 ## Contributing
 
