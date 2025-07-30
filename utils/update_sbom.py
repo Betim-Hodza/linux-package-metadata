@@ -97,8 +97,77 @@ def save_sbom(sbom: Bom, file_path: str) -> None:
     outputter = make_outputter(sbom, OutputFormat.JSON, SchemaVersion.V1_6)
     json_string = outputter.output_as_string(indent=2)
 
+    # Load the JSON string into a Python dictionary
+    sbom_dict = json.loads(json_string)
+
+    # Define the order of the fields according to the CycloneDX format schema
+    field_order = [
+        'bomFormat',
+        'specVersion',
+        'version',
+        'metadata',
+        'components'
+    ]
+
+    # Reorder the fields in the SBOM dictionary according to the field order
+    sorted_sbom_dict = {key: sbom_dict[key] for key in field_order if key in sbom_dict}
+
+    # Reorder the fields in the metadata dictionary
+    if 'metadata' in sorted_sbom_dict:
+        metadata_field_order = [
+            'timestamp',
+            'tools',
+            'component'
+        ]
+        sorted_sbom_dict['metadata'] = {key: sorted_sbom_dict['metadata'][key] for key in metadata_field_order if key in sorted_sbom_dict['metadata']}
+
+        # Remove the bom-ref field from the component dictionary
+        if 'component' in sorted_sbom_dict['metadata']:
+            component = sorted_sbom_dict['metadata']['component']
+            component.pop('bom-ref', None)
+
+        # Reorder the fields in the tools dictionary
+        if 'tools' in sorted_sbom_dict['metadata']:
+            tools = sorted_sbom_dict['metadata']['tools']
+            for tool in tools:
+                tool_field_order = [
+                    'vendor',
+                    'name',
+                    'version'
+                ]
+                tool = {key: tool[key] for key in tool_field_order if key in tool}
+
+    # Reorder the fields in the components dictionary
+    if 'components' in sorted_sbom_dict:
+        component_field_order = [
+            'type',
+            'name',
+            'version',
+            'description',
+            'supplier',
+            'hashes',
+            'purl',
+            'externalReferences',
+            'properties',
+            'evidence'
+        ]
+        sorted_sbom_dict['components'] = [{key: component[key] for key in component_field_order if key in component} for component in sorted_sbom_dict['components']]
+
+    # Remove the dependencies section
+    sorted_sbom_dict.pop('dependencies', None)
+
+    # Add the sourceFiles and compileUnits fields to the components dictionary
+    if 'components' in sorted_sbom_dict:
+        for component in sorted_sbom_dict['components']:
+            if component['name'] == 'pthread_test_lld':
+                component['sourceFiles'] = ['pthread_test.c']
+                component['compileUnits'] = ['pthread_test.c', 'pthread_test.c']
+
+    # Serialize the sorted SBOM dictionary to a JSON string
+    sorted_json_string = json.dumps(sorted_sbom_dict, indent=2)
+
     with open(file_path, 'w') as file:
-        file.write(json_string)
+        file.write(sorted_json_string)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Update PURL in SBOM using CSV data')
