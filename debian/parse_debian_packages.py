@@ -130,7 +130,7 @@ class DebianPackageParser:
                 logger.error(f"Error reading release file {release_file}: {e}")
         return releases
     
-    def process_all_packages(self):
+    def process_all_packages(self, specific_release=None):
         """Process all downloaded Debian package files."""
         logger.info("Starting Debian package processing")
         
@@ -139,7 +139,8 @@ class DebianPackageParser:
             logger.error("No package files found in temp directory")
             return
         
-        all_packages = []
+        # Group packages by release
+        packages_by_release = {}
         
         for packages_file in packages_files:
             try:
@@ -152,13 +153,20 @@ class DebianPackageParser:
                     logger.warning(f"Unexpected filename format: {packages_file}")
                     continue
                 
+                # Skip if specific release is requested and this isn't it
+                if specific_release and release != specific_release:
+                    continue
+                
                 logger.info(f"Processing {packages_file.name}")
+                
+                if release not in packages_by_release:
+                    packages_by_release[release] = []
                 
                 package_count = 0
                 for package in self.parse_packages_file(packages_file):
                     try:
                         metadata = self.extract_package_metadata(package, release, component, architecture)
-                        all_packages.append(metadata)
+                        packages_by_release[release].append(metadata)
                         package_count += 1
                     except Exception as e:
                         logger.error(f"Error processing package in {packages_file}: {e}")
@@ -168,11 +176,24 @@ class DebianPackageParser:
             except Exception as e:
                 logger.error(f"Error processing file {packages_file}: {e}")
         
-        if all_packages:
-            output_file = self.output_dir / "debian_packages.csv"
-            self.write_csv(all_packages, output_file)
-            logger.info(f"Written {len(all_packages)} packages to {output_file}")
-        else:
+        # Write CSV files for each release
+        for release, packages in packages_by_release.items():
+            if packages:
+                output_file = self.output_dir / f"debian_{release}_packages.csv"
+                self.write_csv(packages, output_file)
+                logger.info(f"Written {len(packages)} packages to {output_file}")
+        
+        # Also write combined file if processing all releases
+        if not specific_release and packages_by_release:
+            all_packages = []
+            for packages in packages_by_release.values():
+                all_packages.extend(packages)
+            if all_packages:
+                output_file = self.output_dir / "debian_packages.csv"
+                self.write_csv(all_packages, output_file)
+                logger.info(f"Written {len(all_packages)} packages to combined {output_file}")
+        
+        if not packages_by_release:
             logger.warning("No packages processed")
     
     def write_csv(self, packages: List[Dict[str, str]], output_file: Path):
@@ -205,8 +226,14 @@ class DebianPackageParser:
             return {'verified': 'error', 'method': 'signature check failed', 'signer': 'N/A'}
 
 def main():
+    import argparse
+    
+    arg_parser = argparse.ArgumentParser(description='Parse Debian packages')
+    arg_parser.add_argument('--release', help='Process specific release only')
+    args = arg_parser.parse_args()
+    
     parser = DebianPackageParser()
-    parser.process_all_packages()
+    parser.process_all_packages(specific_release=args.release)
 
 if __name__ == "__main__":
     main()

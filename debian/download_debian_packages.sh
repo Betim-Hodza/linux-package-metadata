@@ -107,6 +107,14 @@ main() {
     
     log "Debian package download completed"
     log "Files downloaded to: $TEMP_DIR"
+    
+    # Generate CSV files for each release
+    for release in "${DEBIAN_RELEASES[@]}"; do
+        log "Generating CSV for Debian $release"
+        python3 "${SCRIPT_DIR}/parse_debian_packages.py" --release "$release" || log "Failed to generate CSV for Debian $release"
+    done
+    
+    log "CSV generation completed"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

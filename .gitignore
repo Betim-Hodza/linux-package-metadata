@@ -46,14 +46,26 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Project specific
+# Project specific - temporary and cache directories
 temp/
 output/
 final_output/
+cache/
+downloads/
 *.log
 *.tmp
 
-# Large data files
+# Generated CSV files (keep templates/examples but ignore large generated files)
+combined_*.csv
+*_packages.csv
+!/docs/examples/*_packages.csv
+
+# Always include important project files
+!LICENSE
+!README.md
+!requirements.txt
+
+# Large data files and archives
 *.gz
 *.xz
 *.bz2
@@ -62,12 +74,94 @@ final_output/
 *.tar.xz
 *.tar.bz2
 *.zip
+*.deb
+*.rpm
+*.apk
 
-# Package metadata caches
+# Package metadata caches and downloaded files
 *.xml
 *.db
+*.sqlite
+*.sqlite3
 APKINDEX*
 Packages*
 Release*
 repomd.xml
 primary*.xml
+filelists*.xml
+other*.xml
+updateinfo*.xml
+
+# Distribution-specific temporary files
+# Rocky/CentOS
+repomd_*.xml
+
+# Ubuntu/Debian  
+Packages_*
+Release_*
+
+# Arch Linux
+*.db.tar.xz
+*.files.tar.xz
+
+# Alpine
+APKINDEX.tar.gz
+
+# Fedora
+repodata/
+
+# Compiled binaries and build artifacts
+prototype/csv_hashmap/csv_hashmap
+prototype/*/build/
+prototype/*/*.o
+prototype/*/*.exe
+
+# Configuration files with sensitive data (keep templates)
+config.ini
+secrets.env
+.env.local
+*.key
+*.pem
+*.crt
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Backup files
+*.bak
+*.backup
+*~
+*.orig
+
+# Lock files (keep for reproducibility but ignore if too large)
+poetry.lock
+Pipfile.lock
+
+# Editor-specific files
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# Documentation build outputs
+docs/_build/
+docs/build/
+site/
+
+# Temporary GUI files
+*.ui~
+*.qmlc
+*.jsc
+
+# Performance profiling
+*.prof
+*.pstats
