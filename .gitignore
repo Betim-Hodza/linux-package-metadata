@@ -71,3 +71,6 @@ Packages*
 Release*
 repomd.xml
 primary*.xml
+
+# json
+*.json
