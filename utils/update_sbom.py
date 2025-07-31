@@ -1,6 +1,5 @@
 import json
 import csv
-import cyclonedx
 import argparse
 import difflib
 
@@ -8,20 +7,10 @@ import difflib
 from typing import TYPE_CHECKING
 
 from packageurl import PackageURL
-
 from cyclonedx.builder.this import this_component as cdx_lib_component
-from cyclonedx.exception import MissingOptionalDependencyException
-from cyclonedx.factory.license import LicenseFactory
-from cyclonedx.model import XsUri
 from cyclonedx.model.bom import Bom
-from cyclonedx.model.component import Component, ComponentType
-from cyclonedx.model.tool import Tool
-from cyclonedx.model.contact import OrganizationalEntity
 from cyclonedx.output import make_outputter
-from cyclonedx.output.json import JsonV1Dot6
 from cyclonedx.schema import OutputFormat, SchemaVersion
-from cyclonedx.validation import make_schemabased_validator
-from cyclonedx.validation.json import JsonStrictValidator
 
 
 def update_purl(sbom: Bom, csv_data: list[dict]) -> Bom:
@@ -50,6 +39,7 @@ def update_purl(sbom: Bom, csv_data: list[dict]) -> Bom:
                 closest_match_ratio = match_ratio
 
         if closest_match and closest_match_ratio > 0.6:  # adjust the threshold as needed
+            print(f"closest_match_ratio: {closest_match_ratio}")
             print(f"Matched row: {closest_match} against package name: {package_name}")
             # Update the PURL in the SBOM
             component.purl = PackageURL.from_string(closest_match['purl'])
