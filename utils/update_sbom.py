@@ -25,22 +25,23 @@ def update_purl(sbom: Bom, csv_data: list[dict]) -> Bom:
     Returns:
     - Bom: The updated SBOM.
     """
-
+    global matches
 
     for component in sbom.components:
         # Get the package name and version
         package_name = component.name
-        package_hash = component.hashes
-
-     
+        package_hashes = component.hashes
 
         for row in csv_data:
-            if package_hash == row['sha256']:
-                component.purl = PackageURL.from_string(row['purl'])
-                matches = matches + 1
-                print(f"Found matching hash for: {package_hash}")
-
-
+            print(f"package: {row['package']}, sha256: {row['sha256']}")
+            for hash in package_hashes:
+                if hash.alg == 'SHA-256':
+                    hash_value = hash.content
+                    print(f"package hash: {hash_value}")
+                    if hash_value == row['sha256']:
+                        component.purl = PackageURL.from_string(row['purl'])
+                        matches += 1
+                        print(f"Found matching hash for: {hash_value}")
 
     return sbom
 
@@ -194,13 +195,18 @@ def main() -> None:
 
         for path in paths_to_check:
             if os.path.isfile(path):
+                print(f"Loading CSV data from file: {path}")
                 for chunk in load_csv_data_in_chunks(path):
+                    print(f"Loaded {len(chunk)} rows from file: {path}")
                     updated_sbom = update_purl(sbom, chunk)
                     sbom = updated_sbom
             elif os.path.isdir(path):
+                print(f"Loading CSV data from directory: {path}")
                 for file in os.listdir(path):
                     if file.endswith('.csv'):
+                        print(f"Loading CSV data from file: {os.path.join(path, file)}")
                         for chunk in load_csv_data_in_chunks(os.path.join(path, file)):
+                            print(f"Loaded {len(chunk)} rows from file: {os.path.join(path, file)}")
                             updated_sbom = update_purl(sbom, chunk)
                             sbom = updated_sbom
     elif args.distro:
@@ -242,6 +248,7 @@ def main() -> None:
     save_sbom(sbom, args.output)
 
     print(f"Found {matches} matches")
+
 
 if __name__ == '__main__':
     main()
