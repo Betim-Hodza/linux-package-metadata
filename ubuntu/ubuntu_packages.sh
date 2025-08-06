@@ -7,8 +7,8 @@ base_url="https://mirrors.kernel.org/ubuntu/pool/universe"
 TEMP_DIR="temp"
 mkdir -p "$TEMP_DIR"
 # Set the output directory
-output_dir="packages"
-mkdir -p "$output_dir"
+OUTPUT_DIR="packages"
+mkdir -p "$OUTPUT_DIR"
 
 # Loop through all the folders in the universe pool
 for folder in $(curl -s  -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/'); do
@@ -21,9 +21,15 @@ for folder in $(curl -s  -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' |
       PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
       wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"
 
+      
+
       # get name and ver and extract deb file
       PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
       PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
+      PACKAGE_SHA256=$(sha256sum "$PACKAGE_FILE")
+
+      # Save package metdata
+      echo "$PACKAGE_NAME,$PACKAGE_VERSION,$PACKAGE_SHA256,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
     
       PACKAGE_DIR="$TEMP_DIR/$PACKAGE_NAME-$PACKAGE_VERSION"
       mkdir -p "$PACKAGE_DIR"
@@ -34,13 +40,13 @@ for folder in $(curl -s  -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' |
       SHA256SUMS=()
       FILE_PATHS=()
       for FILE in $(find "$PACKAGE_DIR" -type f); do
-        SHA256SUM=$(sha256sum "$FILE" | cut -d ' ' -f 1)
-        SHA256SUMS+=("$SHA256SUM")
-        FILE_PATHS+=("$FILE")
+        echo "$PACKAGE_NAME,$PACKAGE_VERSION,$FILE,$(sha256sum "$FILE" | cut -d ' ' -f 1),$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
+        # SHA256SUM=$(sha256sum "$FILE" | cut -d ' ' -f 1)
+        # SHA256SUMS+=("$SHA256SUM")
+        # FILE_PATHS+=("$FILE")
       done
 
-      # Save package metdata
-      echo "$PACKAGE_NAME,$PACKAGE_VERSION,${SHA256SUMS[@]},${FILE_PATHS[@]},$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
+    
 
       rm "$PACKAGE_FILE"
       rm -rf "$PACKAGE_DIR"
