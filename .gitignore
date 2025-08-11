@@ -54,11 +54,14 @@ cache/
 downloads/
 *.log
 *.tmp
+packages/
 
 # Generated CSV files (keep templates/examples but ignore large generated files)
 combined_*.csv
 *_packages.csv
 !/docs/examples/*_packages.csv
+files.csv
+packages.csv
 
 # Always include important project files
 !LICENSE
