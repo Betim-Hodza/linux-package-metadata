@@ -1,5 +1,7 @@
 #!/bin/bash
 
+XARGS_PROCESSES=50
+
 # Set the base URL components
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 
@@ -18,7 +20,7 @@ echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
 # Files for intermediate URLs
 LETTERS_FILE="$TEMP_DIR/letters.txt"
 SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-URLS_FILE="$TEMP_DIR/urls.txt"rocky
+URLS_FILE="$TEMP_DIR/urls.txt"
 
 > "$LETTERS_FILE"
 > "$SUBFOLDERS_FILE"
@@ -62,7 +64,7 @@ export SUBFOLDERS_FILE
 exec 202>>"$SUBFOLDERS_FILE"
 
 # Parallelize getting subfolders
-cat "$LETTERS_FILE" | xargs -P 10 -I {} bash -c 'get_subfolders "{}"'
+cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
 # Function to get package URLs from a subfolder URL
 get_packages() {
@@ -90,25 +92,34 @@ export URLS_FILE
 exec 203>>"$URLS_FILE"
 
 # Parallelize getting packages
-cat "$SUBFOLDERS_FILE" | xargs -P 10 -I {} bash -c 'get_packages "{}"'
+cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
 # Function to process a single package URL
 process_package() {
   local PACKAGE_URL="$1"
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
+  local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
+  local PACKAGE_DIR="$TEMP_DIR/$PACKAGE-$UNIQUE_ID"
   
   # Download the package
-  wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"
+  if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
+    echo "Error: Failed to download $PACKAGE_URL" >&2
+    return 
+  fi
   
   # Extract name and version (assuming standard naming: name_version_arch.deb)
   PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
   PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
   
-  local PACKAGE_DIR="$TEMP_DIR/$PACKAGE_NAME-$PACKAGE_VERSION-$$"  # Add PID to avoid collisions
+  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
   
-  mkdir -p "$PACKAGE_DIR"
-  dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR"
+  if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
+    echo "Error: failed to extract $PACKAGE_FILE" >&2
+    rm -f "$PACKAGE_FILE"
+    rm -rf "$PACKAGE_DIR"
+    return
+  fi
   
   # Calculate SHA-256 sum of the package file
   local PACKAGE_SHA256SUM=$(sha256sum "$PACKAGE_FILE" | cut -d ' ' -f 1)
@@ -143,7 +154,7 @@ exec 200>>"$OUTPUT_DIR/packages.csv"
 exec 201>>"$OUTPUT_DIR/files.csv"
 
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | xargs -P 10 -I {} bash -c 'process_package "{}"'
+cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
 
 # Cleanup
 rm "$LETTERS_FILE" "$SUBFOLDERS_FILE" "$URLS_FILE"

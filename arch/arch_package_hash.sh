@@ -111,7 +111,7 @@ process_package() {
   PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\2/')
   
   # Create temporary directory
-  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return 1; }
+  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
   
   # Extract package with zstd (assuming tar supports .zst, otherwise use zstd -d | tar)
   if ! tar -x --use-compress-program=unzstd -f "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
