@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the base URL components
-ARCH_COMPONENTS=("core" "extra" "multilib")
+DEBIAN_COMPONENTS=("main" "non-free-firmware" "non-free")
 
 # Set the temporary directory
 TEMP_DIR="temp"
@@ -25,8 +25,8 @@ URLS_FILE="$TEMP_DIR/urls.txt"
 > "$URLS_FILE"
 
 # Collect letter URLs sequentially
-for component in "${ARCH_COMPONENTS[@]}"; do
-  base_url="https://mirrors.edge.kernel.org/archlinux/${component}"
+for component in "${UBUNTU_COMPONENTS[@]}"; do
+  base_url="https://dfw.mirror.rackspace.com/debian/pool/${component}"
   
   # Get folders (letters)
   folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
@@ -69,7 +69,7 @@ get_packages() {
   local subfolder_url="$1"
   
   # Get packages
-  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+\.zst">[^<]+\.zst</a>' | sed -r 's/<a href="([^"]+\.zst)">[^<]+\.zst<\/a>/\1/')
+  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+\.deb">[^<]+\.deb</a>' | sed -r 's/<a href="([^"]+\.deb)">[^<]+\.deb<\/a>/\1/')
   
   local lines=""
   for package in $packages; do
@@ -92,59 +92,45 @@ exec 203>>"$URLS_FILE"
 # Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P 10 -I {} bash -c 'get_packages "{}"'
 
-Function to process a single package URL
+# Function to process a single package URL
 process_package() {
   local PACKAGE_URL="$1"
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
-  local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
-  local PACKAGE_DIR="$TEMP_DIR/$PACKAGE-$UNIQUE_ID"
   
   # Download the package
-  if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
-    echo "Error: Failed to download $PACKAGE_URL" >&2
-    return 
-  fi
+  wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"
   
-  # Extract name, version, and release (format: name-version-release-arch.pkg.tar.zst)
-  PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\1/')
-  PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\2/')
+  # Extract name and version (assuming standard naming: name_version_arch.deb)
+  PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
+  PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
   
-  # Create temporary directory
-  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return 1; }
+  local PACKAGE_DIR="$TEMP_DIR/$PACKAGE_NAME-$PACKAGE_VERSION-$$"  # Add PID to avoid collisions
   
-  # Extract package with zstd (assuming tar supports .zst, otherwise use zstd -d | tar)
-  if ! tar -x --use-compress-program=unzstd -f "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
-    echo "Error: Failed to extract $PACKAGE_FILE" >&2
-    rm -f "$PACKAGE_FILE"
-    rm -rf "$PACKAGE_DIR"
-    return 
-  fi
+  mkdir -p "$PACKAGE_DIR"
+  dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR"
   
   # Calculate SHA-256 sum of the package file
   local PACKAGE_SHA256SUM=$(sha256sum "$PACKAGE_FILE" | cut -d ' ' -f 1)
   
-  # Append package metadata with locking
+  # Append package metadata with locking to handle concurrency
   flock -x 200
-  echo "$PACKAGE_BASENAME,$PACKAGE_VERSION,$PACKAGE_SHA256SUM,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
+  echo "$PACKAGE_NAME,$PACKAGE_VERSION,$PACKAGE_SHA256SUM,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
   flock -u 200
   
-  # Loop through all files in the package, excluding metadata files
+  # Loop through all files in the package
   while IFS= read -r -d '' FILE; do
-    # Skip Arch-specific metadata files
-    [[ "$FILE" =~ \.PKGINFO$|\.MTREE$|\.INSTALL$ ]] && continue
-    
     local FILE_SHA256SUM=$(sha256sum "$FILE" | cut -d ' ' -f 1)
-    local RELATIVE_FILE="${FILE#$PACKAGE_DIR/}"
+    local RELATIVE_FILE="${FILE#$PACKAGE_DIR/}"  # Make file path relative to package root
     
     # Append file metadata with locking
     flock -x 201
-    echo "$PACKAGE_BASENAME,$PACKAGE_VERSION,$FILE_SHA256SUM,$RELATIVE_FILE,$PACKAGE_URL" >> "$OUTPUT_DIR/files.csv"
+    echo "$PACKAGE_NAME,$PACKAGE_VERSION,$FILE_SHA256SUM,$RELATIVE_FILE,$PACKAGE_URL" >> "$OUTPUT_DIR/files.csv"
     flock -u 201
   done < <(find "$PACKAGE_DIR" -type f -print0)
   
   # Cleanup
-  rm -f "$PACKAGE_FILE"
+  rm "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
 }
 

@@ -62,7 +62,7 @@ export SUBFOLDERS_FILE
 exec 202>>"$SUBFOLDERS_FILE"
 
 # Parallelize getting subfolders
-cat "$LETTERS_FILE" | xargs -P 100 -I {} bash -c 'get_subfolders "{}"'
+cat "$LETTERS_FILE" | xargs -P 10 -I {} bash -c 'get_subfolders "{}"'
 
 # Function to get package URLs from a subfolder URL
 get_packages() {
@@ -90,7 +90,7 @@ export URLS_FILE
 exec 203>>"$URLS_FILE"
 
 # Parallelize getting packages
-cat "$SUBFOLDERS_FILE" | xargs -P 100 -I {} bash -c 'get_packages "{}"'
+cat "$SUBFOLDERS_FILE" | xargs -P 10 -I {} bash -c 'get_packages "{}"'
 
 # Function to process a single package URL
 process_package() {
@@ -143,7 +143,7 @@ exec 200>>"$OUTPUT_DIR/packages.csv"
 exec 201>>"$OUTPUT_DIR/files.csv"
 
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | xargs -P 100 -I {} bash -c 'process_package "{}"'
+cat "$URLS_FILE" | xargs -P 10 -I {} bash -c 'process_package "{}"'
 
 # Cleanup
 rm "$LETTERS_FILE" "$SUBFOLDERS_FILE" "$URLS_FILE"

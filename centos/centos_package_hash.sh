@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the base URL components
-ALPINE_VERSIONS=("v3.0" "v3.1" "v3.10" "v3.11" "v3.12" "v3.13" "v3.14" "v3.15" "v3.16" "v3.17" "v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "v3.3" "v3.4" "v3.5" "v3.6" "v3.7" "v3.8" "v3.9" "latest-stable" "edge")
+CENTOS_VERSIONS=("9-stream" "10-stream")
 
 # Set the temporary directory
 TEMP_DIR="temp"
@@ -27,15 +27,15 @@ URLS_FILE="$TEMP_DIR/urls.txt"
 # Function to get subfolders (package directories) from a letter URL
 get_subfolders() {
   # Collect URLs sequentially for each version
-  for version in "${ALPINE_VERSIONS[@]}"; do
-    base_url="hhttps://mirrors.edge.kernel.org/alpine/${version}/main/x86_64/"
+  for version in "${CENTOS_VERSIONS[@]}"; do
+    base_url="https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages"
     
     # Get folders (letters)
     folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
     
     local lines=""
     for folder in $folders; do
-      lines+="$letter_url/$folder"$'\n'
+      lines+="$folder"$'\n'
     done
   done
   # Append with locking
@@ -52,14 +52,14 @@ export SUBFOLDERS_FILE
 exec 202>>"$SUBFOLDERS_FILE"
 
 # Parallelize getting subfolders
-cat "$LETTERS_FILE" | xargs -P 100 -I {} bash -c 'get_subfolders "{}"'
+cat "$LETTERS_FILE" | xargs -P 10 -I {} bash -c 'get_subfolders "{}"'
 
 # Function to get package URLs from a subfolder URL
 get_packages() {
   local subfolder_url="$1"
   
   # Get packages
-  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+\.apk">[^<]+\.apk</a>' | sed -r 's/<a href="([^"]+\.apk)">[^<]+\.apk<\/a>/\1/')
+  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' | sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
   
   local lines=""
   for package in $packages; do
@@ -80,7 +80,7 @@ export URLS_FILE
 exec 203>>"$URLS_FILE"
 
 # Parallelize getting packages
-cat "$SUBFOLDERS_FILE" | xargs -P 100 -I {} bash -c 'get_packages "{}"'
+cat "$SUBFOLDERS_FILE" | xargs -P 10 -I {} bash -c 'get_packages "{}"'
 
 Function to process a single package URL
 process_package() {
@@ -96,20 +96,23 @@ process_package() {
     return 
   fi
   
-  # Extract name, version, and release (format: name-version-release.apk)
-  PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\1/')
-  PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\2/')
+  # Extract name, version, and release (format: name-version-release.dist.arch.rpm)
+  PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
+  PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
   
   # Create temporary directory
   mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return 1; }
   
-  # Extract package with bsdtar (works best with alpine)
-  if ! bsdtar -x -f "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
+  # Extract package with rpm
+  cd "$PACKAGE_DIR"
+  if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
     echo "Error: Failed to extract $PACKAGE_FILE" >&2
     rm -f "$PACKAGE_FILE"
     rm -rf "$PACKAGE_DIR"
+    cd ..
     return 
   fi
+  cd ..
   
   # Calculate SHA-256 sum of the package file
   local PACKAGE_SHA256SUM=$(sha256sum "$PACKAGE_FILE" | cut -d ' ' -f 1)
@@ -147,7 +150,7 @@ exec 200>>"$OUTPUT_DIR/packages.csv"
 exec 201>>"$OUTPUT_DIR/files.csv"
 
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | xargs -P 100 -I {} bash -c 'process_package "{}"'
+cat "$URLS_FILE" | xargs -P 10 -I {} bash -c 'process_package "{}"'
 
 # Cleanup
 rm "$LETTERS_FILE" "$SUBFOLDERS_FILE" "$URLS_FILE"
