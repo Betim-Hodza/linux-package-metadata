@@ -18,7 +18,7 @@ echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
 # Files for intermediate URLs
 LETTERS_FILE="$TEMP_DIR/letters.txt"
 SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-URLS_FILE="$TEMP_DIR/urls.txt"
+URLS_FILE="$TEMP_DIR/urls.txt"rocky
 
 > "$LETTERS_FILE"
 > "$SUBFOLDERS_FILE"
