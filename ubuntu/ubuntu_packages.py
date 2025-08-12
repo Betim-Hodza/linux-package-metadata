@@ -125,18 +125,21 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
 
-    # Initialize CSV files packages, files, and urls
-    with open(os.path.join(OUTPUT_DIR, "packages.csv"), "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["name", "version", "sha256", "url"])
+    # Initialize CSV files packages, files, and urls if they don't exist
+    if not os.path.exists(os.path.join(OUTPUT_DIR, "packages.csv")):
+        with open(os.path.join(OUTPUT_DIR, "packages.csv"), "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["name", "version", "sha256", "url"])
 
-    with open(os.path.join(OUTPUT_DIR, "files.csv"), "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["name", "version", "sha256", "file", "url"])
+    if not os.path.exists(os.path.join(OUTPUT_DIR, "files.csv")):
+        with open(os.path.join(OUTPUT_DIR, "files.csv"), "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["name", "version", "sha256", "file", "url"])
 
-    with open(os.path.join(OUTPUT_DIR, "urls.csv"), "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["url", "status"])
+    if not os.path.exists(os.path.join(OUTPUT_DIR, "urls.csv")):
+        with open(os.path.join(OUTPUT_DIR, "urls.csv"), "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["url", "status"])
 
     # Get letter URLs
     letter_urls = []
@@ -172,21 +175,39 @@ def main():
             except Exception as e:
                 print(f"Error getting packages for {subfolder_url}: {e}")
 
-    # Add package URLs to urls.csv with status -1 (not worked on yet)
-    with open(os.path.join(OUTPUT_DIR, "urls.csv"), "a", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        for package_url in package_urls:
-            writer.writerow([package_url, -1])
+    # Add package URLs to urls.csv with status -1 (not worked on yet) if they don't exist
+    if os.path.exists(os.path.join(OUTPUT_DIR, "urls.csv")):
+        with open(os.path.join(OUTPUT_DIR, "urls.csv"), "r", newline="") as csvfile:
+            reader = csv.reader(csvfile)
+            existing_urls = [row[0] for row in reader]
+            for package_url in package_urls:
+                if package_url not in existing_urls:
+                    with open(os.path.join(OUTPUT_DIR, "urls.csv"), "a", newline="") as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow([package_url, -1])
+    else:
+        with open(os.path.join(OUTPUT_DIR, "urls.csv"), "a", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            for package_url in package_urls:
+                writer.writerow([package_url, -1])
 
     # Process packages
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = {executor.submit(process_package, package_url): package_url for package_url in package_urls}
-        for future in concurrent.futures.as_completed(futures):
-            package_url = futures[future]
-            try:
-                future.result()
-            except Exception as e:
-                print(f"Error processing package {package_url}: {e}")
+    with open(os.path.join(OUTPUT_DIR, "urls.csv"), "r", newline="") as csvfile:
+        reader = csv.reader(csvfile)
+        next(reader)  # Skip header
+        for row in reader:
+            package_url = row[0]
+            status = int(row[1])
+            # if the status is -1 (not worked on) or 0 (error occurred during process) run
+            if status == -1 or status == 0:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+                    futures = {executor.submit(process_package, package_url): package_url for package_url in [package_url]}
+                    for future in concurrent.futures.as_completed(futures):
+                        package_url = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            print(f"Error processing package {package_url}: {e}")
 
 if __name__ == "__main__":
     main()
