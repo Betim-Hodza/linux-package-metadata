@@ -27,7 +27,10 @@ URLS_FILE="temp/urls.csv"
 # Collect letter URLs sequentially
 for component in "${UBUNTU_COMPONENTS[@]}"; do
   base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
+
+  # Get folders (letters)
   folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+</a>/\1/' | grep -v '^.' | grep -v '^\.\.' | grep -v '^?')
+  
   for folder in $folders; do
     echo "$base_url/$folder" >> "$LETTERS_FILE"
   done
@@ -37,17 +40,27 @@ done
 get_subfolders() 
 {
   local letter_url="$1"
+
+  # get subfolders from letter
   subfolders=$(curl -s -L "$letter_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+</a>/\1/' | grep -v '^.' | grep -v '^\.\.' | grep -v '^?')
+  
   local lines=""
   for subfolder in $subfolders; do
     lines+="$letter_url/$subfolder\n"
   done
+
+  # Append with locking
+  flock -x 202
   printf "%s" "$lines" >> "$SUBFOLDERS_FILE"
+  flock -u 202
 }
 
 # Export function and variables
 export -f get_subfolders
 export SUBFOLDERS_FILE
+
+# Setup lock for subfolders file
+exec 202>>"$SUBFOLDERS_FILE"
 
 # Parallelize getting subfolders
 cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
@@ -56,18 +69,28 @@ cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders 
 get_packages() 
 {
   local subfolder_url="$1"
+  
+  # get packages
   packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+.deb">[^<]+.deb</a>' | sed -r 's/<a href="([^"]+.deb)">[^<]+.deb</a>/\1/')
+  
   local lines=""
   # mark packages as not worked on yet
   for package in $packages; do
     lines+="$subfolder_url/$package,${STATE[0]}\n"
   done
+  
+  # Append with locking
+  flock -x 203
   printf "%s" "$lines" >> "$URLS_FILE"
+  flock -u 203
 }
 
 # Export function and variables
 export -f get_packages
 export URLS_FILE
+
+# Setup lock for URLs file
+exec 203>>"$URLS_FILE"
 
 # Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
@@ -82,21 +105,21 @@ process_package()
   local UNIQUE_ID=$(uuidgen || echo "$$-RANDOM")
   local PACKAGE_DIR="temp/$PACKAGE-$UNIQUE_ID"
 
-  # only process files that havent been processed (0) or 
+  # only process files that havent been processed 0 or -1
   if [ "$STATUS" != "${STATE[2]}" ]; then
     return
   fi
 
-  # Update status to 0 (in progress)
-  sed -i "s|$PACKAGE_URL,${STATE[0]}|$PACKAGE_URL,${STATE[1]}|g" "$URLS_FILE"
-
   # Download the package
   if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
     echo "Error: Failed to download $PACKAGE_URL" >&2
-    # Update status to -1 (not started) on failure
-    sed -i "s|$PACKAGE_URL,0|$PACKAGE_URL,-1|g" "$URLS_FILE"
+
+    # state remains at -1 to indicate we have no downloaded the package
     return
   fi
+
+  # Update status to -1 -> 0 (in progress)
+  sed -i "s|$PACKAGE_URL,${STATE[0]}|$PACKAGE_URL,${STATE[1]}|g" "$URLS_FILE"
 
   # Extract name and version (assuming standard naming: name_version_arch.deb)
   local PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
@@ -129,8 +152,8 @@ process_package()
   # Cleanup
   rm "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
-  # Update status to 1 (obtained hash)
-  sed -i "s|$PACKAGE_URL,0|$PACKAGE_URL,1|g" "$URLS_FILE"
+  # Update status from 0 -> 1 (obtained hash)
+  sed -i "s|$PACKAGE_URL,${STATE[1]}|$PACKAGE_URL,${STATE[2]}|g" "$URLS_FILE"
 }
 
 # Export the function for xargs
