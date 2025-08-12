@@ -48,6 +48,8 @@ get_packages()
   flock -x 203
   printf "%s" "$lines" >> "$URLS_FILE"
   flock -u 203
+
+  log "urls.csv contain $(wc -l output/urls.csv) lines"
 }
 
 
