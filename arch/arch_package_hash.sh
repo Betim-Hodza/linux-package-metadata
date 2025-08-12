@@ -92,7 +92,7 @@ exec 203>>"$URLS_FILE"
 # Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P 10 -I {} bash -c 'get_packages "{}"'
 
-Function to process a single package URL
+# Function to process a single package URL
 process_package() {
   local PACKAGE_URL="$1"
   local PACKAGE=$(basename "$PACKAGE_URL")

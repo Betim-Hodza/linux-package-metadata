@@ -2,7 +2,7 @@
 
 # Set the base URL components
 FEDORA_TYPE=("archive" )
-FEDORA_VERSIONS=("main" "restricted" "universe" "multiverse")
+FEDORA_VERSIONS=("38" "39" "40" "41" "42")
 
 # Set the temporary directory
 TEMP_DIR="temp"
@@ -28,6 +28,9 @@ URLS_FILE="$TEMP_DIR/urls.txt"rocky
 # Collect letter URLs sequentially
 for type in "${FEDORA_TYPE[@]}"; do
     for version in "${FEDORA_VERSIONS[@]}"; do
+        if [ "$type" = "archive" ] && { [ "$version" == "41" ] || [ "$version" == "42" ]; } ; then
+          continue
+        fi
         base_url="https://download-ib01.fedoraproject.org/pub/${type}/fedora/linux/releases/${version}/Everything/x86_64/os/Packages/"
         
         # Get folders (letters)
@@ -109,9 +112,9 @@ process_package() {
   fi
   
   
-  # Extract name, version, and release (format: name-version-release.dist.arch.rpm)
+  # Extract name, version, and release (format: name-version.dist.arch.rpm)  0ad-0.0.26-22.fc41.x86_64.rpm   
   PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
-  PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
+  PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2/')
   
   # Create temporary directory
   mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
@@ -131,7 +134,7 @@ process_package() {
   
   # Append package metadata with locking to handle concurrency
   flock -x 200
-  echo "$PACKAGE_NAME,$PACKAGE_VERSION,$PACKAGE_SHA256SUM,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
+  echo "$PACKAGE_BASENAME,$PACKAGE_VERSION,$PACKAGE_SHA256SUM,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
   flock -u 200
   
   # Loop through all files in the package
@@ -141,7 +144,7 @@ process_package() {
     
     # Append file metadata with locking
     flock -x 201
-    echo "$PACKAGE_NAME,$PACKAGE_VERSION,$FILE_SHA256SUM,$RELATIVE_FILE,$PACKAGE_URL" >> "$OUTPUT_DIR/files.csv"
+    echo "$PACKAGE_BASENAME,$PACKAGE_VERSION,$FILE_SHA256SUM,$RELATIVE_FILE,$PACKAGE_URL" >> "$OUTPUT_DIR/files.csv"
     flock -u 201
   done < <(find "$PACKAGE_DIR" -type f -print0)
   
