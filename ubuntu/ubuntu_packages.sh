@@ -6,6 +6,11 @@ UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
 
+log() 
+{
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+}
+
 # Function to get subfolders (package directories) from a letter URL
 get_subfolders() 
 {
@@ -55,16 +60,15 @@ process_package()
   local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
   local PACKAGE_DIR="$TEMP_DIR/$PACKAGE-$UNIQUE_ID"
   
-  # Update state to processing
-  update_state "$PACKAGE_URL" 0
-  
   # Download the package
   if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
-    echo "Error: Failed to download $PACKAGE_URL" >&2
-    update_state "$PACKAGE_URL" -1
+    log "Error: Failed to download $PACKAGE_URL"
     return 
   fi
   
+  # Update state to processing
+  update_state "$PACKAGE_URL" 0
+
   # Extract name and version (assuming standard naming: name_version_arch.deb)
   PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
   PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
@@ -72,10 +76,11 @@ process_package()
   mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; update_state "$PACKAGE_URL" -1; return; }
   
   if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
-    echo "Error: failed to extract $PACKAGE_FILE" >&2
+    log "Error: failed to extract $PACKAGE_FILE reverting state of $PACKAGE_URL to -1" 
     rm -f "$PACKAGE_FILE"
     rm -rf "$PACKAGE_DIR"
     update_state "$PACKAGE_URL" -1
+
     return
   fi
   
@@ -115,6 +120,8 @@ update_state()
   python3 update_state.py -u "$PACKAGE_URL" -s "$STATE"
 }
 
+export -f log
+
 # Set the temporary directory and output
 mkdir -p "$TEMP_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -128,6 +135,8 @@ LETTERS_FILE="$TEMP_DIR/letters.txt"
 SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
 URLS_FILE="$OUTPUT_DIR/urls.csv"
 
+log "Created temp/output dirs, initialized csv, and files"
+
 # Collect letter URLs sequentially
 for component in "${UBUNTU_COMPONENTS[@]}"; do
   base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
@@ -140,6 +149,9 @@ for component in "${UBUNTU_COMPONENTS[@]}"; do
   done
 done
 
+log "Obtained letter URLS"
+log "Getting subfolders..."
+
 # Setup lock for subfolders file
 exec 202>>"$SUBFOLDERS_FILE"
 
@@ -147,9 +159,11 @@ exec 202>>"$SUBFOLDERS_FILE"
 export -f get_subfolders
 export SUBFOLDERS_FILE
 
-
 # Parallelize getting subfolders
 cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+log "Obtained subfolders"
+log "Obtaining final URLS..."
 
 # Setup lock for URLs file
 exec 203>>"$URLS_FILE"
@@ -160,6 +174,8 @@ export URLS_FILE
 # Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
+log "Obtained final URLS"
+log "Processing Packages"
 
 # Setup file descriptors for locking (assuming flock is available)
 exec 200>>"$OUTPUT_DIR/packages.csv"
@@ -171,3 +187,7 @@ export TEMP_DIR OUTPUT_DIR
 
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
 cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'read url state < <(echo "{}"); process_package "$url" "$state"'
+
+PROCESSED_PACKAGES=$(wc "$OUTPUT_DIR/packages.csv")
+HASHED_FILES=$(wc "$OUTPUT_DIR/files.csv")
+log "Finished processing $PROCESSED_PACKAGES packages with $HASHED_FILES hashed files"
