@@ -1,45 +1,12 @@
 #!/bin/bash
 
+# GLOBALS
 XARGS_PROCESSES=50
-
-# Set the base URL components
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 
-# Set the temporary directory
-TEMP_DIR="temp"
-mkdir -p "$TEMP_DIR"
-
-# Set the output directory
-OUTPUT_DIR="packages"
-mkdir -p "$OUTPUT_DIR"
-
-# Initialize CSV files with headers
-echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
-echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
-
-# Files for intermediate URLs
-LETTERS_FILE="$TEMP_DIR/letters.txt"
-SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-URLS_FILE="$TEMP_DIR/urls.txt"
-
-> "$LETTERS_FILE"
-> "$SUBFOLDERS_FILE"
-> "$URLS_FILE"
-
-# Collect letter URLs sequentially
-for component in "${UBUNTU_COMPONENTS[@]}"; do
-  base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
-  
-  # Get folders (letters)
-  folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-  
-  for folder in $folders; do
-    echo "$base_url/$folder" >> "$LETTERS_FILE"
-  done
-done
-
 # Function to get subfolders (package directories) from a letter URL
-get_subfolders() {
+get_subfolders() 
+{
   local letter_url="$1"
   
   # Get subfolders
@@ -56,18 +23,9 @@ get_subfolders() {
   flock -u 202
 }
 
-# Export function and variables
-export -f get_subfolders
-export SUBFOLDERS_FILE
-
-# Setup lock for subfolders file
-exec 202>>"$SUBFOLDERS_FILE"
-
-# Parallelize getting subfolders
-cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
-
 # Function to get package URLs from a subfolder URL
-get_packages() {
+get_packages() 
+{
   local subfolder_url="$1"
   
   # Get packages
@@ -84,18 +42,10 @@ get_packages() {
   flock -u 203
 }
 
-# Export function and variables
-export -f get_packages
-export URLS_FILE
-
-# Setup lock for URLs file
-exec 203>>"$URLS_FILE"
-
-# Parallelize getting packages
-cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
 # Function to process a single package URL
-process_package() {
+process_package() 
+{
   local PACKAGE_URL="$1"
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
@@ -145,16 +95,71 @@ process_package() {
   rm -rf "$PACKAGE_DIR"
 }
 
-# Export the function for xargs
+main()
+{
+
+  # Set the temporary directory and output
+  TEMP_DIR="temp"
+  OUTPUT_DIR="output"
+  mkdir -p "$TEMP_DIR"
+  mkdir -p "$OUTPUT_DIR"
+
+  # Initialize CSV files with headers
+  echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
+  echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
+
+  # Files for intermediate URLs
+  LETTERS_FILE="$TEMP_DIR/letters.txt"
+  SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
+  URLS_FILE="$OUTPUT_DIR/urls.csv"
+
+  > "$LETTERS_FILE"
+  > "$SUBFOLDERS_FILE"
+  > "$URLS_FILE"
+
+  # Collect letter URLs sequentially
+  for component in "${UBUNTU_COMPONENTS[@]}"; do
+    base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
+    
+    # Get folders (letters)
+    folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+    
+    for folder in $folders; do
+      echo "$base_url/$folder" >> "$LETTERS_FILE"
+    done
+  done
+
+  # Setup lock for subfolders file
+  exec 202>>"$SUBFOLDERS_FILE"
+
+  # Parallelize getting subfolders
+  cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+  # Setup lock for URLs file
+  exec 203>>"$URLS_FILE"
+
+  # Parallelize getting packages
+  cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+
+  # Setup file descriptors for locking (assuming flock is available)
+  exec 200>>"$OUTPUT_DIR/packages.csv"
+  exec 201>>"$OUTPUT_DIR/files.csv"
+
+  # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
+  cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
+
+
+}
+# Export function and variables
+export -f get_subfolders
+export SUBFOLDERS_FILE
+export -f get_packages
+export URLS_FILE
 export -f process_package
 export TEMP_DIR OUTPUT_DIR
 
-# Setup file descriptors for locking (assuming flock is available)
-exec 200>>"$OUTPUT_DIR/packages.csv"
-exec 201>>"$OUTPUT_DIR/files.csv"
+# entry
+main
 
-# Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
-
-# Cleanup
-rm "$LETTERS_FILE" "$SUBFOLDERS_FILE" "$URLS_FILE"
+echo "done processing"
