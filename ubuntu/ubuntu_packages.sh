@@ -1,8 +1,6 @@
 #!/bin/bash
 
 XARGS_PROCESSES=50
-# -1: not downloaded, 0: downloaded but hash isnt saved, 1: downloaded and saved hash
-STATE=("-1" "0" "1")
 
 # Set the base URL components
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
@@ -20,16 +18,20 @@ echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
 echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
 
 # Files for intermediate URLs
-LETTERS_FILE="temp/letters.txt"
-SUBFOLDERS_FILE="temp/subfolders.txt"
-URLS_FILE="temp/urls.csv"
+LETTERS_FILE="$TEMP_DIR/letters.txt"
+SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
+URLS_FILE="$TEMP_DIR/urls.txt"
+
+> "$LETTERS_FILE"
+> "$SUBFOLDERS_FILE"
+> "$URLS_FILE"
 
 # Collect letter URLs sequentially
 for component in "${UBUNTU_COMPONENTS[@]}"; do
   base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
-
+  
   # Get folders (letters)
-  folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+</a>/\1/' | grep -v '^.' | grep -v '^\.\.' | grep -v '^?')
+  folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
   
   for folder in $folders; do
     echo "$base_url/$folder" >> "$LETTERS_FILE"
@@ -37,18 +39,17 @@ for component in "${UBUNTU_COMPONENTS[@]}"; do
 done
 
 # Function to get subfolders (package directories) from a letter URL
-get_subfolders() 
-{
+get_subfolders() {
   local letter_url="$1"
-
-  # get subfolders from letter
-  subfolders=$(curl -s -L "$letter_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+</a>/\1/' | grep -v '^.' | grep -v '^\.\.' | grep -v '^?')
+  
+  # Get subfolders
+  subfolders=$(curl -s -L "$letter_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
   
   local lines=""
   for subfolder in $subfolders; do
-    lines+="$letter_url/$subfolder\n"
+    lines+="$letter_url/$subfolder"$'\n'
   done
-
+  
   # Append with locking
   flock -x 202
   printf "%s" "$lines" >> "$SUBFOLDERS_FILE"
@@ -66,17 +67,15 @@ exec 202>>"$SUBFOLDERS_FILE"
 cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
 # Function to get package URLs from a subfolder URL
-get_packages() 
-{
+get_packages() {
   local subfolder_url="$1"
   
-  # get packages
-  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+.deb">[^<]+.deb</a>' | sed -r 's/<a href="([^"]+.deb)">[^<]+.deb</a>/\1/')
+  # Get packages
+  packages=$(curl -s -L "$subfolder_url" | grep -oE '<a href="[^"]+\.deb">[^<]+\.deb</a>' | sed -r 's/<a href="([^"]+\.deb)">[^<]+\.deb<\/a>/\1/')
   
   local lines=""
-  # mark packages as not worked on yet
   for package in $packages; do
-    lines+="$subfolder_url/$package,${STATE[0]}\n"
+    lines+="$subfolder_url/$package"$'\n'
   done
   
   # Append with locking
@@ -96,72 +95,65 @@ exec 203>>"$URLS_FILE"
 cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
 # Function to process a single package URL
-process_package() 
-{
+process_package() {
   local PACKAGE_URL="$1"
-  local STATUS="$2"
   local PACKAGE=$(basename "$PACKAGE_URL")
-  local PACKAGE_FILE="temp/$PACKAGE"
-  local UNIQUE_ID=$(uuidgen || echo "$$-RANDOM")
-  local PACKAGE_DIR="temp/$PACKAGE-$UNIQUE_ID"
-
-  # only process files that havent been processed 0 or -1
-  if [ "$STATUS" != "${STATE[2]}" ]; then
-    return
-  fi
-
+  local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
+  local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
+  local PACKAGE_DIR="$TEMP_DIR/$PACKAGE-$UNIQUE_ID"
+  
   # Download the package
   if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
     echo "Error: Failed to download $PACKAGE_URL" >&2
-
-    # state remains at -1 to indicate we have no downloaded the package
-    return
+    return 
   fi
-
-  # Update status to -1 -> 0 (in progress)
-  sed -i "s|$PACKAGE_URL,${STATE[0]}|$PACKAGE_URL,${STATE[1]}|g" "$URLS_FILE"
-
+  
   # Extract name and version (assuming standard naming: name_version_arch.deb)
-  local PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
-  local PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
-
+  PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
+  PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
+  
   mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
-
+  
   if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
     echo "Error: failed to extract $PACKAGE_FILE" >&2
     rm -f "$PACKAGE_FILE"
     rm -rf "$PACKAGE_DIR"
-
-    # if we fail to extract, remain at 0 as its a failed status
     return
   fi
-
+  
   # Calculate SHA-256 sum of the package file
   local PACKAGE_SHA256SUM=$(sha256sum "$PACKAGE_FILE" | cut -d ' ' -f 1)
-
-  # Append package metadata
+  
+  # Append package metadata with locking to handle concurrency
+  flock -x 200
   echo "$PACKAGE_NAME,$PACKAGE_VERSION,$PACKAGE_SHA256SUM,$PACKAGE_URL" >> "$OUTPUT_DIR/packages.csv"
-
+  flock -u 200
+  
   # Loop through all files in the package
   while IFS= read -r -d '' FILE; do
     local FILE_SHA256SUM=$(sha256sum "$FILE" | cut -d ' ' -f 1)
-    local RELATIVE_FILE="${FILE#$PACKAGE_DIR/}"
+    local RELATIVE_FILE="${FILE#$PACKAGE_DIR/}"  # Make file path relative to package root
+    
+    # Append file metadata with locking
+    flock -x 201
     echo "$PACKAGE_NAME,$PACKAGE_VERSION,$FILE_SHA256SUM,$RELATIVE_FILE,$PACKAGE_URL" >> "$OUTPUT_DIR/files.csv"
+    flock -u 201
   done < <(find "$PACKAGE_DIR" -type f -print0)
-
+  
   # Cleanup
   rm "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
-  # Update status from 0 -> 1 (obtained hash)
-  sed -i "s|$PACKAGE_URL,${STATE[1]}|$PACKAGE_URL,${STATE[2]}|g" "$URLS_FILE"
 }
 
 # Export the function for xargs
 export -f process_package
-export TEMP_DIR
-export OUTPUT_DIR
+export TEMP_DIR OUTPUT_DIR
 
-# Process URLs in parallel using xargs
+# Setup file descriptors for locking (assuming flock is available)
+exec 200>>"$OUTPUT_DIR/packages.csv"
+exec 201>>"$OUTPUT_DIR/files.csv"
+
+# Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
 cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
 
 # Cleanup
