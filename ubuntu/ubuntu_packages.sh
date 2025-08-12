@@ -3,6 +3,8 @@
 # GLOBALS
 XARGS_PROCESSES=50
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
+TEMP_DIR="temp"
+OUTPUT_DIR="output"
 
 # Function to get subfolders (package directories) from a letter URL
 get_subfolders() 
@@ -33,7 +35,7 @@ get_packages()
   
   local lines=""
   for package in $packages; do
-    lines+="$subfolder_url/$package"$'\n'
+    lines+="$subfolder_url/$package,-1"$'\n'
   done
   
   # Append with locking
@@ -47,14 +49,19 @@ get_packages()
 process_package() 
 {
   local PACKAGE_URL="$1"
+  local STATE="$2"
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
   local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
   local PACKAGE_DIR="$TEMP_DIR/$PACKAGE-$UNIQUE_ID"
   
+  # Update state to processing
+  update_state "$PACKAGE_URL" 0
+  
   # Download the package
   if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
     echo "Error: Failed to download $PACKAGE_URL" >&2
+    update_state "$PACKAGE_URL" -1
     return 
   fi
   
@@ -62,12 +69,13 @@ process_package()
   PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
   PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
   
-  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
+  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; update_state "$PACKAGE_URL" -1; return; }
   
   if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
     echo "Error: failed to extract $PACKAGE_FILE" >&2
     rm -f "$PACKAGE_FILE"
     rm -rf "$PACKAGE_DIR"
+    update_state "$PACKAGE_URL" -1
     return
   fi
   
@@ -90,76 +98,76 @@ process_package()
     flock -u 201
   done < <(find "$PACKAGE_DIR" -type f -print0)
   
+  # Update state to completed
+  update_state "$PACKAGE_URL" 1
+  
   # Cleanup
   rm "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
 }
 
-main()
+update_state() 
 {
+  local PACKAGE_URL="$1"
+  local STATE="$2"
 
-  # Set the temporary directory and output
-  TEMP_DIR="temp"
-  OUTPUT_DIR="output"
-  mkdir -p "$TEMP_DIR"
-  mkdir -p "$OUTPUT_DIR"
-
-  # Initialize CSV files with headers
-  echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
-  echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
-
-  # Files for intermediate URLs
-  LETTERS_FILE="$TEMP_DIR/letters.txt"
-  SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-  URLS_FILE="$OUTPUT_DIR/urls.csv"
-
-  > "$LETTERS_FILE"
-  > "$SUBFOLDERS_FILE"
-  > "$URLS_FILE"
-
-  # Collect letter URLs sequentially
-  for component in "${UBUNTU_COMPONENTS[@]}"; do
-    base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
-    
-    # Get folders (letters)
-    folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-    
-    for folder in $folders; do
-      echo "$base_url/$folder" >> "$LETTERS_FILE"
-    done
-  done
-
-  # Setup lock for subfolders file
-  exec 202>>"$SUBFOLDERS_FILE"
-
-  # Parallelize getting subfolders
-  cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
-
-  # Setup lock for URLs file
-  exec 203>>"$URLS_FILE"
-
-  # Parallelize getting packages
-  cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
-
-
-  # Setup file descriptors for locking (assuming flock is available)
-  exec 200>>"$OUTPUT_DIR/packages.csv"
-  exec 201>>"$OUTPUT_DIR/files.csv"
-
-  # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-  cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
-
-
+  # Update state in URLs file using update_state.py (just so much easier T_T)
+  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE"
 }
+
+# Set the temporary directory and output
+mkdir -p "$TEMP_DIR"
+mkdir -p "$OUTPUT_DIR"
+
+# Initialize CSV files with headers
+echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
+echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
+
+# Files for intermediate URLs
+LETTERS_FILE="$TEMP_DIR/letters.txt"
+SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
+URLS_FILE="$OUTPUT_DIR/urls.csv"
+
+# Collect letter URLs sequentially
+for component in "${UBUNTU_COMPONENTS[@]}"; do
+  base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
+  
+  # Get folders (letters)
+  folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+  
+  for folder in $folders; do
+    echo "$base_url/$folder" >> "$LETTERS_FILE"
+  done
+done
+
+# Setup lock for subfolders file
+exec 202>>"$SUBFOLDERS_FILE"
+
 # Export function and variables
 export -f get_subfolders
 export SUBFOLDERS_FILE
+
+
+# Parallelize getting subfolders
+cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+# Setup lock for URLs file
+exec 203>>"$URLS_FILE"
+
 export -f get_packages
 export URLS_FILE
+
+# Parallelize getting packages
+cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+
+# Setup file descriptors for locking (assuming flock is available)
+exec 200>>"$OUTPUT_DIR/packages.csv"
+exec 201>>"$OUTPUT_DIR/files.csv"
+
 export -f process_package
+export -f update_state
 export TEMP_DIR OUTPUT_DIR
 
-# entry
-main
-
-echo "done processing"
+# Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
+cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'read url state < <(echo "{}"); process_package "$url" "$state"'
