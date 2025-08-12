@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # GLOBALS
+GATHERING_URLS=200
 XARGS_PROCESSES=50
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 TEMP_DIR="temp"
@@ -122,6 +123,8 @@ update_state()
 
 export -f log
 
+echo "Please go grab a coffee or just leave this running idle on your server because this WILL take a looooonggg time"
+
 # Set the temporary directory and output
 mkdir -p "$TEMP_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -172,7 +175,7 @@ export -f get_packages
 export URLS_FILE
 
 # Parallelize getting packages
-cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+cat "$SUBFOLDERS_FILE" | xargs -P "$GATHERING_URLS" -I {} bash -c 'get_packages "{}"'
 
 log "Obtained final URLS"
 log "Processing Packages"
