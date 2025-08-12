@@ -3,7 +3,7 @@ import argparse
 
 # is this the most efficient way ? no.
 # i dont care its temporary 
-def update_url_in_csv(url, state, csv_file='temp/urls.csv'):
+def update_url_in_csv(url, state, csv_file='output/urls.csv'):
     """
     Updates a specific line in the csv_file based on the given URL and state.
 

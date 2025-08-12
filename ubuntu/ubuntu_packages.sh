@@ -55,8 +55,9 @@ get_packages()
 # Function to process a single package URL
 process_package() 
 {
-  local PACKAGE_URL="$1"
-  local STATE="$2"
+  local LINE="$1"
+  local PACKAGE_URL=$(echo "$LINE" | cut -d, -f1)
+  local STATE=$(echo "$LINE" | cut -d, -f2)
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
   local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
@@ -194,7 +195,7 @@ export -f update_state
 export TEMP_DIR OUTPUT_DIR
 
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | cut -d, -f1 | xargs -P "$XARGS_PROCESSES" -I {} bash -c "read url state < <(echo \"{}\"); if [ \"$STATE\" != \"1\" ]; then process_package \"$URL\" \"$STATE\"; fi"
+cat "$URLS_FILE" | cut -d, -f1 | xargs -P "$XARGS_PROCESSES" -I {} bash -c "process_package {}"
 
 PROCESSED_PACKAGES=$(wc -l < "$OUTPUT_DIR/packages.csv")
 HASHED_FILES=$(wc -l < "$OUTPUT_DIR/files.csv")
