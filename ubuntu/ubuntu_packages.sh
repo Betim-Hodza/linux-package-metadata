@@ -21,7 +21,7 @@ get_subfolders()
   
   local lines=""
   for subfolder in $subfolders; do
-    lines+="$letter_url/$subfolder"$'\n'
+    lines+="$letter_url$subfolder"$'\n'
   done
   
   # Append with locking
@@ -120,7 +120,7 @@ update_state()
   local STATE="$2"
 
   # Update state in URLs file using update_state.py (just so much easier T_T)
-  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE"
+  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "$OUTPUT_DIR/urls.csv"
 }
 
 export -f log
@@ -156,7 +156,7 @@ if [ ! -f "$URLS_FILE" ]; then
     done
   done
 
-  log "Obtained letter URLS"
+  log "Obtained letter URLS"  
   log "Getting subfolders..."
 
   # Setup lock for subfolders file
