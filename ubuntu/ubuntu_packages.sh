@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # GLOBALS
-XARGS_PROCESSES=50
+XARGS_PROCESSES=10
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
@@ -40,7 +40,7 @@ get_packages()
   
   local lines=""
   for package in $packages; do
-    lines+="$subfolder_url/$package,-1"$'\n'
+    lines+="$subfolder_url$package,-1"$'\n'
   done
   
   # Append with locking
@@ -120,7 +120,7 @@ update_state()
   local STATE="$2"
 
   # Update state in URLs file using update_state.py (just so much easier T_T)
-  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "$OUTPUT_DIR/urls.csv"
+  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "./$OUTPUT_DIR/urls.csv"
 }
 
 export -f log

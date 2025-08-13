@@ -1,4 +1,4 @@
-import csv
+import pandas as pd
 import argparse
 
 # is this the most efficient way ? no.
@@ -12,25 +12,20 @@ def update_url_in_csv(url, state, csv_file):
         state (str): The state to update.
         csv_file (str, optional): The path to the csv file. Defaults to 'urls.csv'.
     """
-    # Read the csv file
-    with open(csv_file, 'r') as file:
-        reader = csv.reader(file)
-        data = list(reader)
 
-    # Find the row to update
-    for i, row in enumerate(data):
-        if row[0] == url:
-            # Update the state
-            data[i][1] = state
-            break
+    # Define the output file and write header only once
+    df = pd.read_csv(csv_file)
+
+    # find the row where urls match
+    if url in df['url'].values:
+        df.loc[df['url'] == url, 'state'] = state
+        print(f"Updated {url} to state '{state}")
+
+        df.to_csv(csv_file, index=False)
     else:
-        # If the URL is not found, add a new row
-        print(f"[ERROR]: URL not found: {url} ")
+        print(f"URL {url} not found in CSV")
+        return
 
-    # Write the updated data back to the csv file
-    with open(csv_file, 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerows(data)
 
 def main():
     parser = argparse.ArgumentParser(description='Update URL in CSV file')
