@@ -127,9 +127,13 @@ export -f log
 
 echo "Please go grab a coffee or just leave this running idle on your server because this WILL take a looooonggg time"
 
+# Files for intermediate URLs
+LETTERS_FILE="$TEMP_DIR/letters.txt"
+SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
+URLS_FILE="$OUTPUT_DIR/urls.csv"
 
 # check if our dirs exist (if they do we resume)
-if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$OUTPUT_DIR/urls.csv" ]]; then
+if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$URLS_FILE" ]]; then
 
   log "Resuming script"
 
@@ -154,11 +158,6 @@ mkdir -p "$OUTPUT_DIR"
 echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
 echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
 echo "urls,state" > "$OUTPUT_DIR/urls.csv"
-
-# Files for intermediate URLs
-LETTERS_FILE="$TEMP_DIR/letters.txt"
-SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-URLS_FILE="$OUTPUT_DIR/urls.csv"
 
 log "Created temp/output dirs, initialized csv, and files"
 
