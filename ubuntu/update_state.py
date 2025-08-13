@@ -14,7 +14,7 @@ def update_url_in_csv(url, state, csv_file):
     """
 
     # Define the output file and write header only once
-    df = pd.read_csv(csv_file)
+    df = pd.read_csv(csv_file, on_bad_lines='warn')
 
     # find the row where urls match
     if url in df['urls'].values:
