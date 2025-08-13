@@ -127,13 +127,33 @@ export -f log
 
 echo "Please go grab a coffee or just leave this running idle on your server because this WILL take a looooonggg time"
 
-# Set the temporary directory and output
+
+# check if our dirs exist (if they do we resume)
+if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$OUTPUT_DIR/urls.csv" ]]; then
+
+  log "Resuming script"
+
+  export -f process_package
+  export -f update_state
+  export TEMP_DIR OUTPUT_DIR
+
+  # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
+  cat "$URLS_FILE" | cut -d, -f1 | xargs -P "$XARGS_PROCESSES" -I {} bash -c "process_package {}"
+
+  PROCESSED_PACKAGES=$(wc -l < "$OUTPUT_DIR/packages.csv")
+  HASHED_FILES=$(wc -l < "$OUTPUT_DIR/files.csv")
+  log "Finished processing $((PROCESSED_PACKAGES - 1)) packages with $((HASHED_FILES - 1)) hashed files"
+  
+  exit 0
+fi
 mkdir -p "$TEMP_DIR"
 mkdir -p "$OUTPUT_DIR"
+
 
 # Initialize CSV files with headers
 echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
 echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
+echo "urls,state" > "$OUTPUT_DIR/urls.csv"
 
 # Files for intermediate URLs
 LETTERS_FILE="$TEMP_DIR/letters.txt"
