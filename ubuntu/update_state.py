@@ -19,11 +19,11 @@ def update_url_in_csv(url, state, csv_file):
     # find the row where urls match
     if url in df['urls'].values:
         df.loc[df['urls'] == url, 'state'] = state
-        print(f"Updated {url} to state '{state}")
+        # print(f"Updated {url} to state '{state}")
 
         df.to_csv(csv_file, index=False)
     else:
-        print(f"URL {url} not found in CSV")
+        # print(f"URL {url} not found in CSV")
         return
 
 

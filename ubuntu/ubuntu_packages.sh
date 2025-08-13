@@ -120,7 +120,7 @@ update_state()
   local STATE="$2"
 
   # Update state in URLs file using update_state.py (just so much easier T_T)
-  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "./$OUTPUT_DIR/urls.csv"
+  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "./$OUTPUT_DIR/urls.csv" &> /dev/null
 }
 
 export -f log
