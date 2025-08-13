@@ -137,6 +137,12 @@ if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$URLS_FILE" ]]; then
 
   log "Resuming script"
 
+  # Setup file descriptors for locking (assuming flock is available)
+  exec 200>>"$OUTPUT_DIR/packages.csv"
+  exec 201>>"$OUTPUT_DIR/files.csv"
+  # Setup lock for URLs file
+  exec 203>>"$URLS_FILE"
+
   export -f process_package
   export -f update_state
   export TEMP_DIR OUTPUT_DIR
@@ -150,9 +156,9 @@ if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$URLS_FILE" ]]; then
   
   exit 0
 fi
+
 mkdir -p "$TEMP_DIR"
 mkdir -p "$OUTPUT_DIR"
-
 
 # Initialize CSV files with headers
 echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
@@ -161,47 +167,44 @@ echo "urls,state" > "$OUTPUT_DIR/urls.csv"
 
 log "Created temp/output dirs, initialized csv, and files"
 
-# Check if urls.csv exists
-if [ ! -f "$URLS_FILE" ]; then
-  # Collect letter URLs sequentially
-  for component in "${UBUNTU_COMPONENTS[@]}"; do
-    base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
-    
-    # Get folders (letters)
-    folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-    
-    for folder in $folders; do
-      echo "$base_url/$folder" >> "$LETTERS_FILE"
-    done
+# Collect letter URLs sequentially
+for component in "${UBUNTU_COMPONENTS[@]}"; do
+  base_url="https://mirrors.kernel.org/ubuntu/pool/${component}"
+  
+  # Get folders (letters)
+  folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+  
+  for folder in $folders; do
+    echo "$base_url/$folder" >> "$LETTERS_FILE"
   done
+done
 
-  log "Obtained letter URLS"  
-  log "Getting subfolders..."
+log "Obtained letter URLS"  
+log "Getting subfolders..."
 
-  # Setup lock for subfolders file
-  exec 202>>"$SUBFOLDERS_FILE"
+# Setup lock for subfolders file
+exec 202>>"$SUBFOLDERS_FILE"
 
-  # Export function and variables
-  export -f get_subfolders
-  export SUBFOLDERS_FILE
+# Export function and variables
+export -f get_subfolders
+export SUBFOLDERS_FILE
 
-  # Parallelize getting subfolders
-  cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+# Parallelize getting subfolders
+cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
-  log "Obtained subfolders"
-  log "Obtaining final URLS..."
+log "Obtained subfolders"
+log "Obtaining final URLS..."
 
-  # Setup lock for URLs file
-  exec 203>>"$URLS_FILE"
+# Setup lock for URLs file
+exec 203>>"$URLS_FILE"
 
-  export -f get_packages
-  export URLS_FILE
+export -f get_packages
+export URLS_FILE
 
-  # Parallelize getting packages
+# Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
-  log "Obtained final URLS"
-fi
+log "Obtained final URLS"
 
 log "Processing Packages"
 
