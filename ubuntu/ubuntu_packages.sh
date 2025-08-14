@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# GLOBALS
 XARGS_PROCESSES=10
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 TEMP_DIR="temp"
-OUTPUT_DIR="output"
+OUTPUT_DIR="packages"
 
 log() 
 {
@@ -21,7 +20,7 @@ get_subfolders()
   
   local lines=""
   for subfolder in $subfolders; do
-    lines+="$letter_url$subfolder"$'\n'
+    lines+="$letter_url/$subfolder"$'\n'
   done
   
   # Append with locking
@@ -40,24 +39,19 @@ get_packages()
   
   local lines=""
   for package in $packages; do
-    lines+="$subfolder_url$package,-1"$'\n'
+    lines+="$subfolder_url/$package"$'\n'
   done
   
   # Append with locking
   flock -x 203
   printf "%s" "$lines" >> "$URLS_FILE"
   flock -u 203
-
-  log "urls.csv contain $(wc -l output/urls.csv) lines"
 }
-
 
 # Function to process a single package URL
 process_package() 
 {
-  local LINE="$1"
-  local PACKAGE_URL=$(echo "$LINE" | cut -d, -f1)
-  local STATE=$(echo "$LINE" | cut -d, -f2)
+  local PACKAGE_URL="$1"
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="$TEMP_DIR/$PACKAGE"
   local UNIQUE_ID=$(uuidgen || echo "$$-$RANDOM")  # Use uuidgen or fallback to PID+RANDOM
@@ -65,25 +59,20 @@ process_package()
   
   # Download the package
   if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
-    log "Error: Failed to download $PACKAGE_URL"
+    echo "Error: Failed to download $PACKAGE_URL" >&2
     return 
   fi
   
-  # Update state to processing
-  update_state "$PACKAGE_URL" 0
-
   # Extract name and version (assuming standard naming: name_version_arch.deb)
   PACKAGE_NAME=$(echo "$PACKAGE" | cut -d '_' -f 1)
   PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
   
-  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; update_state "$PACKAGE_URL" -1; return; }
+  mkdir -p "$PACKAGE_DIR" || { echo "Error: Failed to create $PACKAGE_DIR" >&2; return; }
   
   if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
-    log "Error: failed to extract $PACKAGE_FILE reverting state of $PACKAGE_URL to -1" 
+    echo "Error: failed to extract $PACKAGE_FILE" >&2
     rm -f "$PACKAGE_FILE"
     rm -rf "$PACKAGE_DIR"
-    update_state "$PACKAGE_URL" -1
-
     return
   fi
   
@@ -106,21 +95,9 @@ process_package()
     flock -u 201
   done < <(find "$PACKAGE_DIR" -type f -print0)
   
-  # Update state to completed
-  update_state "$PACKAGE_URL" 1
-  
   # Cleanup
   rm "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
-}
-
-update_state() 
-{
-  local PACKAGE_URL="$1"
-  local STATE="$2"
-
-  # Update state in URLs file using update_state.py (just so much easier T_T)
-  python3 update_state.py -u "$PACKAGE_URL" -s "$STATE" -c "./$OUTPUT_DIR/urls.csv" &> /dev/null
 }
 
 export -f log
@@ -130,11 +107,10 @@ echo "Please go grab a coffee or just leave this running idle on your server bec
 # Files for intermediate URLs
 LETTERS_FILE="$TEMP_DIR/letters.txt"
 SUBFOLDERS_FILE="$TEMP_DIR/subfolders.txt"
-URLS_FILE="$OUTPUT_DIR/urls.csv"
+URLS_FILE="$TEMP_DIR/urls.txt"
 
 # check if our dirs exist (if they do we resume)
 if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$URLS_FILE" ]]; then
-
   log "Resuming script"
 
   # Setup file descriptors for locking (assuming flock is available)
@@ -148,8 +124,12 @@ if [[ -d "$TEMP_DIR" ]] && [[ -d "$OUTPUT_DIR" ]] && [[ -s "$URLS_FILE" ]]; then
   export TEMP_DIR OUTPUT_DIR
 
   # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-  cat "$URLS_FILE" | cut -d, -f1 | xargs -P "$XARGS_PROCESSES" -I {} bash -c "process_package {}"
+  cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
 
+PROCESSED_PACKAGES=$(wc -l < "$OUTPUT_DIR/packages.csv")
+  HASHED_FILES=$(wc -l < "$OUTPUT_DIR/files.csv")
+  log "Finished processing $((PROCESSED_PACKAGES - 1)) packages with $((HASHED_FILES - 1)) hashed files"
+  
   PROCESSED_PACKAGES=$(wc -l < "$OUTPUT_DIR/packages.csv")
   HASHED_FILES=$(wc -l < "$OUTPUT_DIR/files.csv")
   log "Finished processing $((PROCESSED_PACKAGES - 1)) packages with $((HASHED_FILES - 1)) hashed files"
@@ -163,9 +143,7 @@ mkdir -p "$OUTPUT_DIR"
 # Initialize CSV files with headers
 echo "name,version,sha256,url" > "$OUTPUT_DIR/packages.csv"
 echo "name,version,sha256,file,url" > "$OUTPUT_DIR/files.csv"
-echo "urls,state" > "$OUTPUT_DIR/urls.csv"
 
-log "Created temp/output dirs, initialized csv, and files"
 
 # Collect letter URLs sequentially
 for component in "${UBUNTU_COMPONENTS[@]}"; do
@@ -179,46 +157,37 @@ for component in "${UBUNTU_COMPONENTS[@]}"; do
   done
 done
 
-log "Obtained letter URLS"  
-log "Getting subfolders..."
 
-# Setup lock for subfolders file
-exec 202>>"$SUBFOLDERS_FILE"
 
 # Export function and variables
 export -f get_subfolders
 export SUBFOLDERS_FILE
 
+# Setup lock for subfolders file
+exec 202>>"$SUBFOLDERS_FILE"
+
 # Parallelize getting subfolders
 cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
-log "Obtained subfolders"
-log "Obtaining final URLS..."
+
+# Export function and variables
+export -f get_packages
+export URLS_FILE
 
 # Setup lock for URLs file
 exec 203>>"$URLS_FILE"
 
-export -f get_packages
-export URLS_FILE
-
 # Parallelize getting packages
 cat "$SUBFOLDERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
-log "Obtained final URLS"
 
-log "Processing Packages"
+# Export the function for xargs
+export -f process_package
+export TEMP_DIR OUTPUT_DIR
 
 # Setup file descriptors for locking (assuming flock is available)
 exec 200>>"$OUTPUT_DIR/packages.csv"
 exec 201>>"$OUTPUT_DIR/files.csv"
 
-export -f process_package
-export -f update_state
-export TEMP_DIR OUTPUT_DIR
-
 # Process URLs in parallel using xargs (adjust -P for number of parallel processes, e.g., 10)
-cat "$URLS_FILE" | cut -d, -f1 | xargs -P "$XARGS_PROCESSES" -I {} bash -c "process_package {}"
-
-PROCESSED_PACKAGES=$(wc -l < "$OUTPUT_DIR/packages.csv")
-HASHED_FILES=$(wc -l < "$OUTPUT_DIR/files.csv")
-log "Finished processing $((PROCESSED_PACKAGES - 1)) packages with $((HASHED_FILES - 1)) hashed files"
+cat "$URLS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
