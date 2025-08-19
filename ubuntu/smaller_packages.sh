@@ -3,8 +3,10 @@
 # GLOBALS
 XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
+DEBIAN_COMPONENTS=("main" "non-free")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
+DISTRO="NULL"
 
 # Time stamped log func
 log() 
@@ -156,9 +158,62 @@ export -f process_package
 
 log "Script started – $(date '+%Y-%m-%d %H:%M:%S')"
 
+# take in argument for which distro 
+if [ "$#" -eq 0 ]; then
+    log "Need to pass in distro name or --all (e.g. ubuntu, debian, fedora, rocky, centos, arch, alipine)"
+    log "Usage $0 --distro ubuntu || --all  "
+    exit 1
+fi
+
+log "$2"
+
+case $2 in
+  "ubuntu")
+    TEMP_DIR="ubuntu/temp"
+    OUTPUT_DIR="ubuntu/output"
+    DISTRO=$2
+    ;;
+  "debian")
+    TEMP_DIR="debian/temp"
+    OUTPUT_DIR="debian/output"
+    DISTRO=$2
+    ;;
+  "fedora")
+    TEMP_DIR="fedora/temp"
+    OUTPUT_DIR="fedora/output"
+    DISTRO=$2
+    ;;
+  "rocky")
+    TEMP_DIR="rocky/temp"
+    OUTPUT_DIR="rocky/output"
+    DISTRO=$2
+    ;;
+  "centos")
+    TEMP_DIR="centos/temp"
+    OUTPUT_DIR="centos/output"
+    DISTRO=$2
+    ;;
+  "arch")
+    TEMP_DIR="arch/temp"
+    OUTPUT_DIR="arch/output"
+    DISTRO=$2
+    ;;
+  "alpine")
+    TEMP_DIR="alpine/temp"
+    OUTPUT_DIR="alpine/output"
+    DISTRO=$2
+    ;;
+  *)
+    log "Not a supported distro"
+    exit 1
+    ;;
+esac
+
+# going to be used in diff funcs
+export DISTRO
+
 # have essential dirs existing
 mkdir -p "$TEMP_DIR" "$OUTPUT_DIR"
-
 
 # Initialise CSV files only once
 if [[ ! -s "${OUTPUT_DIR}/packages.csv" ]]; then
@@ -178,16 +233,52 @@ else
   # -------------------  BUILD LETTER LIST  ----------------------- #
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
   >"$LETTERS_FILE"
-  for comp in "${UBUNTU_COMPONENTS[@]}"; do
-    base="https://mirrors.kernel.org/ubuntu/pool/${comp}"
-    folders=$(curl -s -L "$base" |
-              grep -oE '<a href="[^"]+">[^<]+</a>' |
-              sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
-              grep -vE '^\.$|^\.\.$|^\?')
-    for f in $folders; do
-      echo "$base/$f" >> "$LETTERS_FILE"
-    done
-  done
+
+  case $DISTRO in
+    "ubuntu")
+      for comp in "${UBUNTU_COMPONENTS[@]}"; do
+        base="https://mirrors.kernel.org/ubuntu/pool/${comp}"
+        folders=$(curl -s -L "$base" |
+                  grep -oE '<a href="[^"]+">[^<]+</a>' |
+                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
+                  grep -vE '^\.$|^\.\.$|^\?')
+        for f in $folders; do
+          echo "$base/$f" >> "$LETTERS_FILE"
+        done
+      done
+      ;;
+    "debian")
+      for comp in "${DEBIAN_COMPONENTS[@]}"; do
+        base="https://mirrors.edge.kernel.org/debian/pool/${comp}"
+        folders=$(curl -s -L "$base" |
+                  grep -oE '<a href="[^"]+">[^<]+</a>' |
+                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
+                  grep -vE '^\.$|^\.\.$|^\?')
+        for f in $folders; do
+          echo "$base/$f" >> "$LETTERS_FILE"
+        done
+      done
+      ;;
+    "fedora")
+
+      ;;
+    "rocky")
+
+      ;;
+    "centos")
+
+      ;;
+    "arch")
+
+      ;;
+    "alpine")
+
+      ;;
+    *)
+      log "Not a supported distro"
+      exit 1
+      ;;
+  esac
 
   # -------------------  GET SUBFOLDERS  ------------------------ #
   # Open lock for subfolders file (fd 202)
@@ -220,3 +311,5 @@ PKGS=$(( $(wc -l < "${OUTPUT_DIR}/packages.csv") - 1 ))
 FILES=$(( $(wc -l < "${OUTPUT_DIR}/files.csv") - 1 ))
 DONE=$(awk -F, '$2==1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv")
 log "Finished – $PKGS packages, $FILES files, $DONE URLs marked as completed"
+
+rm 200 201 202 203 204
