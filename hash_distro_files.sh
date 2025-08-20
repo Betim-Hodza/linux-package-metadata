@@ -108,6 +108,7 @@ process_package()
     return
   fi
 
+  # each distro differs in package extraction
   case $DISTRO in
     "ubuntu"|"debian")
       # Extract name / version (assumes name_version_arch.deb)
@@ -135,13 +136,29 @@ process_package()
     "centos")
       ;;
     "arch")
+      # Extract name / version (assumes name_version_arch.deb)
+      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\1/')
+      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\2/')
+
+      # Give our package a unique id to do the unpacking
+      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
+      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! tar -x --use-compress-program=unzstd -f "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
       ;;
     "alpine")
       ;;
   esac
 
   
-
   # Compute sha256sum of the archive (.deb or .gz)
   local PKG_SHA=$(sha256sum "$PACKAGE_FILE" | cut -d' ' -f1)
 
