@@ -4,6 +4,7 @@
 XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
+ARCH_COMPONENTS=("core" "extra" "multilib")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
 DISTRO="NULL"
@@ -80,7 +81,8 @@ get_packages()
 export -f get_packages
 
 # Downloads packages, hashes them, saves it to urls.csv then throws away package data.
-process_package() {
+process_package() 
+{
   local PACKAGE_URL=$1
 
   # Get current state from looking up the PURL in our urls.csv
@@ -106,24 +108,39 @@ process_package() {
     return
   fi
 
+  case $DISTRO in
+    "ubuntu"|"debian")
+      # Extract name / version (assumes name_version_arch.deb)
+      local PACKAGE_NAME=${PACKAGE%%_*}
+      local PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
 
-  # Extract name / version (assumes name_version_arch.deb)
-  local PACKAGE_NAME=${PACKAGE%%_*}
-  local PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
+      # Give our package a unique id to do the unpacking
+      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
+      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
 
-  # Give our package a unique id to do the unpacking
-  local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-  local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
+      ;;
+    "fedora")
+      ;;
+    "rocky")
+      ;;
+    "centos")
+      ;;
+    "arch")
+      ;;
+    "alpine")
+      ;;
+  esac
 
-  # Store and unpack
-  mkdir -p "$PACKAGE_DIR"
-  if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
-    log "ERROR: cannot extract $PACKAGE_FILE"
-    rm -f "$PACKAGE_FILE"
-    rm -rf "$PACKAGE_DIR"
-    set_state "$PACKAGE_URL" -1
-    return
-  fi
+  
 
   # Compute sha256sum of the archive (.deb or .gz)
   local PKG_SHA=$(sha256sum "$PACKAGE_FILE" | cut -d' ' -f1)
@@ -234,7 +251,9 @@ else
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
   >"$LETTERS_FILE"
 
+
   case $DISTRO in
+    # ubuntu and debian run similar cause of their mirrors
     "ubuntu")
       for comp in "${UBUNTU_COMPONENTS[@]}"; do
         base="https://mirrors.kernel.org/ubuntu/pool/${comp}"
@@ -246,6 +265,18 @@ else
           echo "$base/$f" >> "$LETTERS_FILE"
         done
       done
+
+      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "debian")
       for comp in "${DEBIAN_COMPONENTS[@]}"; do
@@ -258,9 +289,21 @@ else
           echo "$base/$f" >> "$LETTERS_FILE"
         done
       done
+
+      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "fedora")
-
+      
       ;;
     "rocky")
 
@@ -269,7 +312,17 @@ else
 
       ;;
     "arch")
+      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      echo "https://mirrors.edge.kernel.org/archlinux/pool/packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "alpine")
 

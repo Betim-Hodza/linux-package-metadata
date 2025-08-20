@@ -66,6 +66,7 @@ linux-package-metadata/
 │   ├── run_all.sh
 │   └── validate_outputs.py
 ├── gui_menu.py          # GUI interface for distribution selection
+├── hash_distro_files.sh # Get specific distro package's individual file hash for each file in the package
 ├── requirements.txt
 ├── .gitignore
 └── README.md
@@ -95,6 +96,27 @@ python3 gui_menu.py
 3. Monitor real-time progress in the log area
 4. Use "Stop All" to halt processing if needed
 5. Results are saved to `output/` directory as CSV files with signature verification data
+
+### hash_distro_files
+
+Take in a distro as an argumnent, grabs all the PURLs (package urls) from a distro mirror. 
+Saves those to a urls.csv with a state of complete / not complete (1 or 0). Then for each
+package in urls.csv, downloads the package with wget, saves it and unpacks it in a temp dir,
+then hashes the full package and each individual file within that to packages.csv and files.csv.
+
+This is an extremly CPU intensive task and takes up gigabytes of storage. Its meant to be a 1shot script
+and not to be run often unless things go catastrophically wrong lol.
+
+Future plans is to run this and then host it on a website when we have a server.
+
+#### Dependencies
+* zstd 
+* debian package manager (dpkg)
+* redhat package manager (rpm)
+
+
+#### Dependencies
+
 
 ### Command Line Interface
 
