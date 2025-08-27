@@ -6,6 +6,7 @@ UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
 CENTOS_VERSIONS=("9-stream" "10-stream")
 FEDORA_TYPE=("archive" )
+ROCKY_VERSIONS=("8.5" "8.6" "8.7" "8.8" "8.9" "8.10" "9.0" "9.1" "9.2" "9.3" "9.4" "9.5" "9.6" "10.0")
 FEDORA_VERSIONS=("38" "39" "40" "41" "42")
 ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
 ALPINE_COMPONENTS=("main" "release" "community")
@@ -146,16 +147,18 @@ process_package()
     return
   fi
 
+  local PACKAGE_NAME
+  local PACKAGE_VERSION
+  # Give our package a unique id to do the unpacking
+  local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
+  local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+
   # each distro differs in package extraction
   case $DISTRO in
     "ubuntu"|"debian")
       # Extract name / version (assumes name_version_arch.deb)
-      local PACKAGE_NAME=${PACKAGE%%_*}
-      local PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
-
-      # Give our package a unique id to do the unpacking
-      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+      PACKAGE_NAME=${PACKAGE%%_*}
+      PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
 
       # Store and unpack
       mkdir -p "$PACKAGE_DIR"
@@ -168,17 +171,39 @@ process_package()
       fi
       ;;
     "fedora")
+      # Extract name / version (assumes name_version_arch.deb)
+      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
+      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2/')
+
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
       ;;
     "rocky")
+      # Extract name / version (assumes name_version_arch.deb)
+      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
+      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
+
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
       ;;
     "centos")
       # Extract name, version, and release (format: name-version-release.dist.arch.rpm)
       PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
       PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
-
-      # Give our package a unique id to do the unpacking
-      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
 
       # Store and unpack
       mkdir -p "$PACKAGE_DIR"
@@ -194,10 +219,6 @@ process_package()
       # Extract name / version (assumes name_version_arch.deb)
       PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\1/')
       PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\2/')
-
-      # Give our package a unique id to do the unpacking
-      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
 
       # Store and unpack
       mkdir -p "$PACKAGE_DIR"
@@ -423,7 +444,30 @@ else
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "rocky")
+      # -------------------  BUILD LETTER LIST  ----------------------- #
+      for version in "${ROCKY_VERSIONS[@]}"; do
+        base_url="https://dfw.mirror.rackspace.com/rocky/${version}/AppStream/x86_64/os/Packages/"
+        
+        # Get folders (letters)
+        folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+        
+        for folder in $folders; do
+          echo "$base_url/$folder" >> "$LETTERS_FILE"
+        done
 
+      done
+
+      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "centos")
       # ------------------- GET URLS ------------------- #
