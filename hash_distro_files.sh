@@ -67,41 +67,51 @@ get_subfolders()
 }
 export -f get_subfolders
 
-# specific subfolders for alpine 
-get_alpine_subfolder() 
-{
-  # Collect URLs sequentially for each version
-  for version in "${ALPINE_VERSIONS[@]}"; do
-    for component in "${ALPINE_COMPONENTS[@]}"; do
-      base_url="https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64"
-      
-      # Get folders (letters)
-      folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-      
-      local lines=""
-      for folder in $folders; do
-        lines+="$folder"$'\n'
-      done
-    done
-  done
-  flock -x 202
-  printf "%s" "$lines" >> "$SUBFOLDERS_FILE"
-  flock -u 202
-}
-export -f get_alpine_subfolder
-
-
 # from the subfolder url we get the actual package url to download later
 get_packages() 
 {
   local subfolder_url=$1
   local pkgs
-  pkgs=$(curl -s -L "$subfolder_url" |
+
+  case $DISTRO in
+    "ubuntu"|"debian")
+        pkgs=$(curl -s -L "$subfolder_url" |
          grep -oE '<a href="[^"]+\.deb">[^<]+\.deb</a>' |
          sed -r 's/<a href="([^"]+\.deb)">[^<]+<\/a>/\1/')
-  for p in $pkgs; do
-    add_url "$subfolder_url/$p"
-  done
+        for p in $pkgs; do
+          add_url "$subfolder_url/$p"
+        done
+      ;;
+    "fedora")
+      ;;
+    "rocky")
+      ;;
+    "centos")
+      pkgs=$(curl -s -L "$subfolder_url" | 
+            grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' | 
+            sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
+      for p in $pkgs; do
+        add_url "$subfolder_url/$p"
+      done
+      ;;
+    "arch")
+      pkgs=$(curl -s -L "$subfolder_url" | 
+            grep -oE '<a href="[^"]+\.zst">[^<]+\.zst</a>' | 
+            sed -r 's/<a href="([^"]+\.zst)">[^<]+\.zst<\/a>/\1/')
+      for p in $pkgs; do
+        add_url "$subfolder_url/$p"
+      done
+      ;;
+    "alpine")
+      pkgs=$(curl -s -L "$subfolder_url" | 
+            grep -oE '<a href="[^"]+\.apk">[^<]+\.apk</a>' | 
+            sed -r 's/<a href="([^"]+\.apk)">[^<]+\.apk<\/a>/\1/')
+      for p in $pkgs; do
+        add_url "$subfolder_url/$p"
+      done
+      ;;
+  esac
+
 }
 export -f get_packages
 
@@ -383,13 +393,25 @@ else
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "alpine")
-      
-      # -------------------  GET SUBFOLDERS  ---------------------- #
+      # ------------------- GET URLS ------------------- #
+      for version in "${ALPINE_VERSIONS[@]}"; do
+        for component in "${ALPINE_COMPONENTS[@]}"; do
+          base_url="https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64"
+          folders=$(curl -s -L "$base" |
+                  grep -oE '<a href="[^"]+">[^<]+</a>' |
+                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
+                  grep -vE '^\.$|^\.\.$|^\?')
+          for f in $folders; do
+            echo "$base/$f" >> "$LETTERS_FILE"
+          done
+        done
+      done
+
+
+      # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_alpine_subfolder "{}"'
-
-      log "after loop"
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
