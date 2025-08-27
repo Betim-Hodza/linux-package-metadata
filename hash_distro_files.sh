@@ -15,24 +15,6 @@ ALPINE_COMPONENTS=("main" "release" "community")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
 DISTRO="NULL"
-spinner_pid=-1
-
-# spinner
-alias spin='while :; do for s in / - \\ \|; do printf "\r$s"; sleep .1; done; done'
-
-function start_spinner()
-{
-  set +m
-  { spin & } 2>/dev/null
-  spinner_pid=$!
-}
-
-function stop_spinner()
-{
-  { kill -9 $spinner_pid && wait; } 2>/dev/null
-  set -m
-  echo -en "\033[2K\r"
-}
 
 # Time stamped log func
 function log() 
@@ -406,12 +388,12 @@ else
       # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
@@ -430,12 +412,12 @@ else
       # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
@@ -462,12 +444,12 @@ else
       # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
@@ -488,12 +470,12 @@ else
       # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
@@ -503,7 +485,7 @@ else
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
       for version in "${CENTOS_VERSIONS[@]}"; do
-        echo "https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+        echo "https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
       done
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
@@ -516,12 +498,12 @@ else
       # -------------------  GET SUBFOLDERS  ------------------------ #
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      echo "https://mirrors.edge.kernel.org/archlinux/pool/packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      echo "https://mirrors.edge.kernel.org/archlinux/pool/packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
 
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
@@ -532,13 +514,13 @@ else
       exec 202>>"${TEMP_DIR}/subfolders.txt"
       for version in "${ALPINE_VERSIONS[@]}"; do
         for component in "${ALPINE_COMPONENTS[@]}"; do
-          echo "https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+          echo "https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
         done
       done
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
 
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
 
@@ -562,7 +544,7 @@ stop_spinner
 log "Starting parallel processing of packages (up to $XARGS_PROCESSES workers)"
 # Feed only the URL column (skip header)
 tail -n +2 "${OUTPUT_DIR}/urls.csv" | cut -d, -f1 |
-  xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"'
+  xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"' > /dev/null
 
 
 # End result
