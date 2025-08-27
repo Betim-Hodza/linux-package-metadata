@@ -4,6 +4,7 @@
 XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
+CENTOS_VERSIONS=("9-stream" "10-stream")
 ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
 ALPINE_COMPONENTS=("main" "release" "community")
 TEMP_DIR="temp"
@@ -169,6 +170,23 @@ process_package()
     "rocky")
       ;;
     "centos")
+      # Extract name, version, and release (format: name-version-release.dist.arch.rpm)
+      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
+      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
+
+      # Give our package a unique id to do the unpacking
+      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
+      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
       ;;
     "arch")
       # Extract name / version (assumes name_version_arch.deb)
@@ -377,7 +395,19 @@ else
 
       ;;
     "centos")
+      # ------------------- GET URLS ------------------- #
+      # it'll be slow but im so tired of trying to do everything in parallel, blame how its organized
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      for version in "${CENTOS_VERSIONS[@]}"; do
+        echo "https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+      done
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
 
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "arch")
       # -------------------  GET SUBFOLDERS  ------------------------ #
