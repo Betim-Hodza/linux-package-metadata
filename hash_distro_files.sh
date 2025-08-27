@@ -89,8 +89,20 @@ function get_packages()
         done
       ;;
     "fedora")
+      pkgs=$(curl -s -L "$subfolder_url" |
+             grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' |
+             sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
+      for p in $pkgs; do
+        add_url "$subfolder_url/$p"
+      done
       ;;
     "rocky")
+      pkgs=$(curl -s -L "$subfolder_url" | 
+            grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' |
+            sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
+        for p in $pkgs; do
+          add_url "$subfolder_url/$p"
+        done
       ;;
     "centos")
       pkgs=$(curl -s -L "$subfolder_url" | 
@@ -283,13 +295,11 @@ function process_package()
 }
 export -f process_package
 
-# Traps
-trap stop_spinner EXIT # make sure our spinner doesnt go crazy later
-
 
 # Main 
 
 log "Script started – $(date '+%Y-%m-%d %H:%M:%S')"
+log "Its recommended to run this in tmux or in the background, it will take a long time to process"
 
 # take in argument for which distro 
 if [ "$#" -eq 0 ]; then
@@ -362,11 +372,8 @@ fi
 # If URLs have already been discovered we can resume, otherwise build them
 if [[ -s "${OUTPUT_DIR}/urls.csv" && $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) -gt 0 ]]; then
   log "Resuming – URLs already discovered"
-  start_spinner
 else
   # -------------------  BUILD LETTER LIST  ----------------------- #
-
-  start_spinner
 
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
   >"$LETTERS_FILE"
@@ -537,8 +544,6 @@ fi
 exec 200>>"${OUTPUT_DIR}/packages.csv"
 exec 201>>"${OUTPUT_DIR}/files.csv"
 exec 204>>"${OUTPUT_DIR}/urls.csv"  
-
-stop_spinner
 
 # Download and calculate sha256sum of packages and subfiles in them in parallel
 log "Starting parallel processing of packages (up to $XARGS_PROCESSES workers)"
