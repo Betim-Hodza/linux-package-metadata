@@ -4,7 +4,8 @@
 XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
-ARCH_COMPONENTS=("core" "extra" "multilib")
+ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
+ALPINE_COMPONENTS=("main" "release" "community")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
 DISTRO="NULL"
@@ -65,6 +66,30 @@ get_subfolders()
   done | flock -x 202 -c 'cat >> "'"${TEMP_DIR}/subfolders.txt"'"'
 }
 export -f get_subfolders
+
+# specific subfolders for alpine 
+get_alpine_subfolder() 
+{
+  # Collect URLs sequentially for each version
+  for version in "${ALPINE_VERSIONS[@]}"; do
+    for component in "${ALPINE_COMPONENTS[@]}"; do
+      base_url="https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64"
+      
+      # Get folders (letters)
+      folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+      
+      local lines=""
+      for folder in $folders; do
+        lines+="$folder"$'\n'
+      done
+    done
+  done
+  flock -x 202
+  printf "%s" "$lines" >> "$SUBFOLDERS_FILE"
+  flock -u 202
+}
+export -f get_alpine_subfolder
+
 
 # from the subfolder url we get the actual package url to download later
 get_packages() 
@@ -155,9 +180,26 @@ process_package()
       fi
       ;;
     "alpine")
+      # Extract name, version, and release (format: name-version-release.apk)
+      PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\1/')
+      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\2/')
+
+      # Give our package a unique id to do the unpacking
+      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
+      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+
+      # Store and unpack
+      mkdir -p "$PACKAGE_DIR"
+      if ! tar -xzf "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
+        log "ERROR: cannot extract $PACKAGE_FILE"
+        rm -f "$PACKAGE_FILE"
+        rm -rf "$PACKAGE_DIR"
+        set_state "$PACKAGE_URL" -1
+        return
+      fi
       ;;
   esac
-
+ 
   
   # Compute sha256sum of the archive (.deb or .gz)
   local PKG_SHA=$(sha256sum "$PACKAGE_FILE" | cut -d' ' -f1)
@@ -268,7 +310,6 @@ else
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
   >"$LETTERS_FILE"
 
-
   case $DISTRO in
     # ubuntu and debian run similar cause of their mirrors
     "ubuntu")
@@ -342,6 +383,20 @@ else
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "alpine")
+      
+      # -------------------  GET SUBFOLDERS  ---------------------- #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_alpine_subfolder "{}"'
+
+      log "after loop"
+
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
 
       ;;
     *)
@@ -349,18 +404,6 @@ else
       exit 1
       ;;
   esac
-
-  # -------------------  GET SUBFOLDERS  ------------------------ #
-  # Open lock for subfolders file (fd 202)
-  exec 202>>"${TEMP_DIR}/subfolders.txt"
-  cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
-
-  # -------------------  GET PACKAGE URLs  ---------------------- #
-  # Open lock for URLs file (fd 203) – we will only append here
-  exec 203>>"${OUTPUT_DIR}/urls.csv"
-  cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
-
-  log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
 fi
 
 # Open the lock‑file descriptors that will be used by the workers.
