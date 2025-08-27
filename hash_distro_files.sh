@@ -24,7 +24,7 @@ function start_spinner()
 {
   set +m
   { spin & } 2>/dev/null
-  spinpid=$!
+  spinner_pid=$!
 }
 
 function stop_spinner()
@@ -380,6 +380,7 @@ fi
 # If URLs have already been discovered we can resume, otherwise build them
 if [[ -s "${OUTPUT_DIR}/urls.csv" && $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) -gt 0 ]]; then
   log "Resuming – URLs already discovered"
+  start_spinner
 else
   # -------------------  BUILD LETTER LIST  ----------------------- #
 
