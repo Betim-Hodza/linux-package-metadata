@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set +m
+
 # GLOBALS
 XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
@@ -13,9 +15,27 @@ ALPINE_COMPONENTS=("main" "release" "community")
 TEMP_DIR="temp"
 OUTPUT_DIR="output"
 DISTRO="NULL"
+spinner_pid=-1
+
+# spinner
+alias spin='while :; do for s in / - \\ \|; do printf "\r$s"; sleep .1; done; done'
+
+function start_spinner()
+{
+  set +m
+  { spin & } 2>/dev/null
+  spinpid=$!
+}
+
+function stop_spinner()
+{
+  { kill -9 $spinner_pid && wait; } 2>/dev/null
+  set -m
+  echo -en "\033[2K\r"
+}
 
 # Time stamped log func
-log() 
+function log() 
 {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
 }
@@ -29,7 +49,7 @@ OUTPUT_DIR="${SCRIPT_ROOT}/${OUTPUT_DIR}"
 export OUTPUT_DIR TEMP_DIR
 
 # Initializes urls with the specified mirror (ubuntu, debian, fedora, etc.)
-add_url() 
+function add_url() 
 {
   local url=$1
   # New URLs are always inserted with state = -1 (not‑started)
@@ -39,7 +59,7 @@ export -f add_url
 
 # updates new state of a url
 # we take in our url.csv read it and basically overwrite it later
-set_state() {
+function set_state() {
   local url=$1 new_state=$2
   flock -x 204 bash -c '
     tmp=$(mktemp) || exit 1
@@ -57,7 +77,7 @@ export -f set_state
 
 
 # from the letter urls we obtain subfolders inside it
-get_subfolders() 
+function get_subfolders() 
 {
   local letter_url=$1
   local subfolders
@@ -72,7 +92,7 @@ get_subfolders()
 export -f get_subfolders
 
 # from the subfolder url we get the actual package url to download later
-get_packages() 
+function get_packages() 
 {
   local subfolder_url=$1
   local pkgs
@@ -120,7 +140,7 @@ get_packages()
 export -f get_packages
 
 # Downloads packages, hashes them, saves it to urls.csv then throws away package data.
-process_package() 
+function process_package() 
 {
   local PACKAGE_URL=$1
 
@@ -281,6 +301,10 @@ process_package()
 }
 export -f process_package
 
+# Traps
+trap stop_spinner EXIT # make sure our spinner doesnt go crazy later
+
+
 # Main 
 
 log "Script started – $(date '+%Y-%m-%d %H:%M:%S')"
@@ -358,6 +382,9 @@ if [[ -s "${OUTPUT_DIR}/urls.csv" && $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc 
   log "Resuming – URLs already discovered"
 else
   # -------------------  BUILD LETTER LIST  ----------------------- #
+
+  start_spinner
+
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
   >"$LETTERS_FILE"
 
@@ -527,6 +554,8 @@ fi
 exec 200>>"${OUTPUT_DIR}/packages.csv"
 exec 201>>"${OUTPUT_DIR}/files.csv"
 exec 204>>"${OUTPUT_DIR}/urls.csv"  
+
+stop_spinner
 
 # Download and calculate sha256sum of packages and subfiles in them in parallel
 log "Starting parallel processing of packages (up to $XARGS_PROCESSES workers)"
