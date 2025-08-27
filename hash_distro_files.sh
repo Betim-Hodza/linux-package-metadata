@@ -191,7 +191,7 @@ process_package()
       ;;
     "alpine")
       # Extract name, version, and release (format: name-version-release.apk)
-      PACKAGE_BASENAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\1/')
+      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\1/')
       PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\2/')
 
       # Give our package a unique id to do the unpacking
@@ -394,25 +394,14 @@ else
       ;;
     "alpine")
       # ------------------- GET URLS ------------------- #
-      for version in "${ALPINE_VERSIONS[@]}"; do
-        for component in "${ALPINE_COMPONENTS[@]}"; do
-          base_url="https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64"
-          folders=$(curl -s -L "$base" |
-                  grep -oE '<a href="[^"]+">[^<]+</a>' |
-                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
-                  grep -vE '^\.$|^\.\.$|^\?')
-          for f in $folders; do
-            echo "$base/$f" >> "$LETTERS_FILE"
-          done
-        done
-      done
-
-
-      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # it'll be slow but im so tired of trying to do everything in parallel, blame how its organized
       # Open lock for subfolders file (fd 202)
       exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
-
+      for version in "${ALPINE_VERSIONS[@]}"; do
+        for component in "${ALPINE_COMPONENTS[@]}"; do
+          echo "https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+        done
+      done
       # -------------------  GET PACKAGE URLs  ---------------------- #
       # Open lock for URLs file (fd 203) – we will only append here
       exec 203>>"${OUTPUT_DIR}/urls.csv"
