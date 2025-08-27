@@ -5,6 +5,8 @@ XARGS_PROCESSES=10                     # how many parallel workers
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
 CENTOS_VERSIONS=("9-stream" "10-stream")
+FEDORA_TYPE=("archive" )
+FEDORA_VERSIONS=("38" "39" "40" "41" "42")
 ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
 ALPINE_COMPONENTS=("main" "release" "community")
 TEMP_DIR="temp"
@@ -389,7 +391,36 @@ else
       log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "fedora")
-      
+      # why cant all distros organize like FEDORA 
+      # -------------------  BUILD LETTER LIST  ----------------------- #
+      for type in "${FEDORA_TYPE[@]}"; do
+        for version in "${FEDORA_VERSIONS[@]}"; do
+          if [ "$type" = "archive" ] && { [ "$version" == "41" ] || [ "$version" == "42" ]; } ; then
+            continue
+          fi
+          base_url="https://download-ib01.fedoraproject.org/pub/${type}/fedora/linux/releases/${version}/Everything/x86_64/os/Packages/"
+          
+          # Get folders (letters)
+          folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
+          
+          for folder in $folders; do
+            echo "$base_url/$folder" >> "$LETTERS_FILE"
+          done
+
+        done
+      done
+
+      # -------------------  GET SUBFOLDERS  ------------------------ #
+      # Open lock for subfolders file (fd 202)
+      exec 202>>"${TEMP_DIR}/subfolders.txt"
+      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"'
+
+      # -------------------  GET PACKAGE URLs  ---------------------- #
+      # Open lock for URLs file (fd 203) – we will only append here
+      exec 203>>"${OUTPUT_DIR}/urls.csv"
+      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
+
+      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
     "rocky")
 
