@@ -4,11 +4,12 @@ set +m
 
 # GLOBALS
 XARGS_PROCESSES=10                     # how many parallel workers
+PROCESS_ALL=0
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
 CENTOS_VERSIONS=("9-stream" "10-stream")
-FEDORA_TYPE=("archive" )
 ROCKY_VERSIONS=("8.5" "8.6" "8.7" "8.8" "8.9" "8.10" "9.0" "9.1" "9.2" "9.3" "9.4" "9.5" "9.6" "10.0")
+FEDORA_TYPE=("archive" )
 FEDORA_VERSIONS=("38" "39" "40" "41" "42")
 ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
 ALPINE_COMPONENTS=("main" "release" "community")
@@ -143,7 +144,7 @@ function process_package()
   cur_state=$(awk -F, -v url="$PACKAGE_URL" '$1==url{print $2}' "${OUTPUT_DIR}/urls.csv")
   
   if [[ $cur_state != -1 ]]; then
-    log "Skipping already‑processed $PACKAGE_URL (state=$cur_state)"
+    # log "Skipping already‑processed $PACKAGE_URL (state=$cur_state)"
     return
   fi
 
@@ -301,10 +302,12 @@ export -f process_package
 log "Script started – $(date '+%Y-%m-%d %H:%M:%S')"
 log "Its recommended to run this in tmux or in the background, it will take a long time to process"
 
+sleep 1
+
 # take in argument for which distro 
 if [ "$#" -eq 0 ]; then
-    log "Need to pass in distro name or --all (e.g. ubuntu, debian, fedora, rocky, centos, arch, alipine)"
-    log "Usage $0 --distro ubuntu || --all  "
+    log "Need to pass in distro name (e.g. ubuntu, debian, fedora, rocky, centos, arch, alipine)"
+    log "Usage $0 --distro ubuntu"
     exit 1
 fi
 
