@@ -288,7 +288,7 @@ function process_package()
 
   # Once everything is completed we mark the state as 1
   set_state "$PACKAGE_URL" 1
-  log "Finished $PACKAGE_URL"
+  # log "Finished $PACKAGE_URL"
 
   # cleanup
   rm -f "$PACKAGE_FILE"
