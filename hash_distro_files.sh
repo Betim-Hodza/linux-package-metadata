@@ -150,7 +150,7 @@ function process_package()
 
   # start progress of downloading it
   set_state "$PACKAGE_URL" 0
-  log "Downloading $PACKAGE_URL"
+  # log "Downloading $PACKAGE_URL"
 
   # wget our package and store it in a temp file. for any errors revert to -1 state
   local PACKAGE=$(basename "$PACKAGE_URL")
