@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Linux Package Hash CSV Search & Sort</title>
+    <style>
+        body {font-family: Arial, sans-serif; margin: 2rem;}
+        table {border-collapse: collapse; width: 100%;}
+        th, td {border: 1px solid #ddd; padding: 8px;}
+        th {cursor: pointer; background: #f2f2f2;}
+        th.sort-asc::after  {content:" ▲";}
+        th.sort-desc::after {content:" ▼";}
+        #pager {margin-top: 1rem;}
+        #pager button {margin: 0 5px;}
+    </style>
+</head>
+<body>
+    <h1>Search CSV</h1>
+    <input type="text" id="searchBox" placeholder="Enter search term…" style="width:300px;padding:5px;">
+    <button id="searchBtn">Search</button>
+
+    <br><br>
+
+    <table id="resultTable">
+        <thead>
+            <tr>
+                {% for col in columns %}
+                <th data-col="{{ col }}">{{ col|capitalize }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div id="pager"></div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

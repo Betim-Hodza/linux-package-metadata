@@ -83,6 +83,7 @@ python3 gui_menu.py
 ```
 
 **Features:**
+
 - ✅ **Visual distribution selection** with checkboxes
 - 📊 **Real-time progress monitoring** with live output streaming
 - ⏱️ **Estimated processing times** and package counts for each distribution
@@ -91,6 +92,7 @@ python3 gui_menu.py
 - 🔐 **Automatic signature verification** for all packages (enabled by default)
 
 **Usage:**
+
 1. Select desired Linux distributions using checkboxes
 2. Click "Start Extraction" to begin processing
 3. Monitor real-time progress in the log area
@@ -99,7 +101,7 @@ python3 gui_menu.py
 
 ### hash_distro_files
 
-Take in a distro as an argumnent, grabs all the PURLs (package urls) from a distro mirror. 
+Take in a distro as an argumnent, grabs all the PURLs (package urls) from a distro mirror.
 Saves those to a urls.csv with a state of complete / not complete (1 or 0). Then for each
 package in urls.csv, downloads the package with wget, saves it and unpacks it in a temp dir,
 then hashes the full package and each individual file within that to packages.csv and files.csv.
@@ -109,14 +111,41 @@ and not to be run often unless things go catastrophically wrong lol.
 
 Future plans is to run this and then host it on a website when we have a server.
 
+
+#### Usage
+
+```bash
+./hash_distro_files.sh --distro example
+
+Purpose: Get Sha256 hashes for each file inside a package for a specific Linux Distro.
+
+--distro [name]
+   Pass in distro name out of the list below to collect PURLs 
+   distro name (e.g. ubuntu, debian, fedora, rocky, centos, arch, alipine)
+```
+
 #### Dependencies
-* zstd 
+
+* tar
 * debian package manager (dpkg)
 * redhat package manager (rpm)
 
+#### Output CSV
 
-#### Dependencies
+urls.csv
+```csv
+url,state
+```
 
+packages.csv
+```csv
+name,version,sha256,url
+```
+
+files.csv
+```csv
+name,version,sha256,file,url
+```
 
 ### Command Line Interface
 
@@ -131,6 +160,7 @@ chmod +x scripts/run_all.sh
 ```
 
 This will:
+
 1. Download package index files for distributions that require it
 2. Parse metadata from all distributions in parallel
 3. Generate individual CSV files for each distribution
@@ -217,20 +247,24 @@ bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubunt
 ## Features
 
 ### License Detection
+
 - Automatic license detection from package metadata
 - Normalization to SPDX identifiers when possible
 - Support for common licenses (GPL, MIT, Apache, BSD, etc.)
 
 ### Hash Validation
+
 - SHA256 and SHA512 checksum extraction and validation
 - Support for multiple hash formats and sources
 
 ### PURL Generation
+
 - Automatic generation of Package URLs following the PURL specification
 - Support for different package types (deb, rpm, apk, alpm)
 - Proper namespace and qualifier handling
 
 ### Digital Signature Verification
+
 - **Repository-level verification** for DEB/APK packages (InRelease files, .SIGN.RSA files)
 - **Package-level verification** for RPM/Arch packages (embedded GPG signatures, .sig files)
 - **Signature status tracking**: `true`/`false`/`disabled`/`error` in CSV output
@@ -240,22 +274,26 @@ bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubunt
 - **Configurable**: Can be enabled/disabled per parser for faster processing
 
 #### Signature Support by Distribution
-| Distribution | Signature Method | Verification Type | Signer |
-|--------------|------------------|-------------------|---------|
-| **Ubuntu** | InRelease GPG signature | Repository-level | Ubuntu Archive Automatic Signing Key |
-| **Debian** | InRelease GPG signature | Repository-level | Debian Archive Automatic Signing Key |
-| **Fedora** | RPM GPG signature | Package-level | Fedora Project |
-| **CentOS** | RPM GPG signature | Package-level | CentOS Project |
-| **Rocky Linux** | RPM GPG signature | Package-level | Rocky Linux |
-| **Amazon Linux** | RPM GPG signature | Package-level | Amazon Linux |
-| **Alpine Linux** | APK .SIGN.RSA signature | Repository-level | Alpine Linux Developer |
-| **Arch Linux** | Arch .sig file signature | Package-level | Arch Linux Developer |
+
+
+| Distribution     | Signature Method         | Verification Type | Signer                               |
+| ------------------ | -------------------------- | ------------------- | -------------------------------------- |
+| **Ubuntu**       | InRelease GPG signature  | Repository-level  | Ubuntu Archive Automatic Signing Key |
+| **Debian**       | InRelease GPG signature  | Repository-level  | Debian Archive Automatic Signing Key |
+| **Fedora**       | RPM GPG signature        | Package-level     | Fedora Project                       |
+| **CentOS**       | RPM GPG signature        | Package-level     | CentOS Project                       |
+| **Rocky Linux**  | RPM GPG signature        | Package-level     | Rocky Linux                          |
+| **Amazon Linux** | RPM GPG signature        | Package-level     | Amazon Linux                         |
+| **Alpine Linux** | APK .SIGN.RSA signature  | Repository-level  | Alpine Linux Developer               |
+| **Arch Linux**   | Arch .sig file signature | Package-level     | Arch Linux Developer                 |
 
 ### Parallel Processing
+
 - Downloads and processing run in parallel for faster execution
 - Configurable concurrency limits to avoid overwhelming servers
 
 ### Error Handling
+
 - Comprehensive error logging and reporting
 - Graceful handling of network failures and malformed data
 - Validation of output data integrity
@@ -271,6 +309,7 @@ bash,5.1-6ubuntu1,a1b2c3...,d4e5f6...,main,amd64,http://archive.ubuntu.com/ubunt
 **Signature verification is enabled by default** for enhanced security. To disable it:
 
 #### Method 1: Modify Parser Initialization
+
 ```python
 # In any parse_*_packages.py file
 def main():
@@ -279,16 +318,19 @@ def main():
 ```
 
 #### Method 2: Environment Variable (Future Enhancement)
+
 ```bash
 export VERIFY_SIGNATURES=false
 python3 ubuntu/parse_ubuntu_packages.py
 ```
 
 **Performance Impact:**
+
 - **Enabled**: ~10-20% slower processing (due to signature verification)
 - **Disabled**: Faster processing, but reduced security assurance
 
 **When Disabled:**
+
 - `signature_verified: disabled`
 - `signature_method: signature verification disabled`
 - `signer: N/A`
@@ -308,18 +350,17 @@ You can modify the following in individual scripts:
 ### Common Issues
 
 1. **Network timeouts**: Some repositories may be slow. The scripts include retry logic and reasonable timeouts.
-
 2. **Missing dependencies**: Install required Python packages:
+
    ```bash
    pip3 install requests lxml
    ```
-
 3. **Permission errors**: Make sure all scripts are executable:
+
    ```bash
    find . -name "*.sh" -exec chmod +x {} \;
    find . -name "*.py" -exec chmod +x {} \;
    ```
-
 4. **Disk space**: Package metadata can be large. Ensure sufficient disk space (recommended: 10GB+).
 
 ### Debugging
