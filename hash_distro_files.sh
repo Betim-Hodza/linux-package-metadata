@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 
-set +m
+#  Safety flags
+set -euo pipefail               # abort on error, treat unset vars as errors
+IFS=$'\n\t'                     # sane field separator for loops
 
-# GLOBALS
+#  GLOBAL CONSTANTS
 XARGS_PROCESSES=10                     # how many parallel workers
-PROCESS_ALL=0
 UBUNTU_COMPONENTS=("main" "restricted" "universe" "multiverse")
 DEBIAN_COMPONENTS=("main" "non-free")
 CENTOS_VERSIONS=("9-stream" "10-stream")
 ROCKY_VERSIONS=("8.5" "8.6" "8.7" "8.8" "8.9" "8.10" "9.0" "9.1" "9.2" "9.3" "9.4" "9.5" "9.6" "10.0")
-FEDORA_TYPE=("archive" )
+FEDORA_TYPE=("archive")
 FEDORA_VERSIONS=("38" "39" "40" "41" "42")
 ALPINE_VERSIONS=("v3.18" "v3.19" "v3.2" "v3.20" "v3.21" "v3.22" "latest-stable" "edge")
 ALPINE_COMPONENTS=("main" "release" "community")
@@ -17,167 +18,236 @@ TEMP_DIR="temp"
 OUTPUT_DIR="output"
 DISTRO="NULL"
 
-# Time stamped log func
-function log() 
-{
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
-}
-export -f log                         # make it visible to child shells
+# Network and retry settings
+MAX_RETRIES=3
+TIMEOUT=30
+RETRY_DELAY=5
 
-# Resolve absolute paths once (prevents empty‑variable “/urls.csv”)
+#  Logging helper (time‑stamped)
+log() {
+  printf '[%(%Y-%m-%d %H:%M:%S)T] %s\n' -1 "$*" >&2
+}
+export -f log
+
+#  Resolve script root (absolute paths)
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# These will be overwritten later per‑distro
 TEMP_DIR="${SCRIPT_ROOT}/${TEMP_DIR}"
 OUTPUT_DIR="${SCRIPT_ROOT}/${OUTPUT_DIR}"
-# these vars are used in multiple subfunctions
-export OUTPUT_DIR TEMP_DIR
+export OUTPUT_DIR TEMP_DIR MAX_RETRIES TIMEOUT RETRY_DELAY
 
-# Initializes urls with the specified mirror (ubuntu, debian, fedora, etc.)
-function add_url() 
-{
+#  Helper – open lock files (called after we know the distro)
+open_locks() {
+  # make sure the directories exist before we try to open files inside them
+  mkdir -p "$TEMP_DIR" "$OUTPUT_DIR"
+
+  # 200 – packages.csv   (write‑only, shared by all workers)
+  exec 200>>"${OUTPUT_DIR}/packages.csv"
+
+  # 201 – files.csv      (write‑only, shared by all workers)
+  exec 201>>"${OUTPUT_DIR}/files.csv"
+
+  # 202 – subfolders list (read‑only for the discovery phase)
+  exec 202>>"${TEMP_DIR}/subfolders.txt"
+
+  # 203 – urls.csv (append‑only, used by add_url)
+  exec 203>>"${OUTPUT_DIR}/urls.csv"
+
+  # 204 – urls.csv (read/write, used by set_state)
+  exec 204>>"${OUTPUT_DIR}/urls.csv"
+}
+export -f open_locks
+
+#  Functions
+
+#  add_url – append a new URL with state = -1 (not‑started)
+add_url() {
   local url=$1
-  # New URLs are always inserted with state = -1 (not‑started)
   flock -x 203 -c "printf '%s,-1\n' \"$url\" >> \"${OUTPUT_DIR}/urls.csv\""
 }
 export -f add_url
 
-# updates new state of a url
-# we take in our url.csv read it and basically overwrite it later
-function set_state() {
+#  set_state – update the state column for a given URL
+#  (uses an in‑place sed, far faster than rewriting the whole file)
+set_state() {
   local url=$1 new_state=$2
-  flock -x 204 bash -c '
-    tmp=$(mktemp) || exit 1
-    while IFS=, read -r u s; do
-      if [[ "$u" == "'"$url"'" ]]; then
-        printf "%s,%s\n" "$u" "'"$new_state"'" >> "$tmp"
-      else
-        printf "%s,%s\n" "$u" "$s" >> "$tmp"
-      fi
-    done < "'"${OUTPUT_DIR}/urls.csv"'"
-    mv "$tmp" "'"${OUTPUT_DIR}/urls.csv"'"
-  '
+  flock -x 204 sed -i -E "s|^(${url}),.*$|\\1,${new_state}|" "${OUTPUT_DIR}/urls.csv"
 }
 export -f set_state
 
+# Robust curl function with retries and timeouts
+curl_robust() {
+  local url=$1
+  local retries=0
+  
+  while [ $retries -lt $MAX_RETRIES ]; do
+    if curl -s -L --connect-timeout $TIMEOUT --max-time $((TIMEOUT * 2)) --retry 2 --retry-delay $RETRY_DELAY "$url"; then
+      return 0
+    fi
+    retries=$((retries + 1))
+    if [ $retries -lt $MAX_RETRIES ]; then
+      log "Retry $retries/$MAX_RETRIES for URL: $url"
+      sleep $RETRY_DELAY
+    fi
+  done
+  log "ERROR: Failed to fetch after $MAX_RETRIES attempts: $url"
+  return 1
+}
+export -f curl_robust
 
-# from the letter urls we obtain subfolders inside it
-function get_subfolders() 
-{
-  local letter_url=$1
-  local subfolders
-  subfolders=$(curl -s -L "$letter_url" |
-               grep -oE '<a href="[^"]+">[^<]+</a>' |
-               sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
-               grep -vE '^\.$|^\.\.$|^\?')
-  for sf in $subfolders; do
-    echo "$letter_url/$sf"
-  done | flock -x 202 -c 'cat >> "'"${TEMP_DIR}/subfolders.txt"'"'
+# Robust wget function with retries and timeouts
+wget_robust() {
+  local url=$1
+  local output=$2
+  local retries=0
+  
+  while [ $retries -lt $MAX_RETRIES ]; do
+    if wget -q --timeout=$TIMEOUT --tries=1 --connect-timeout=$TIMEOUT -O "$output" "$url"; then
+      # Verify the file was actually downloaded and has content
+      if [ -s "$output" ]; then
+        return 0
+      else
+        log "WARNING: Downloaded file is empty: $url"
+        rm -f "$output"
+      fi
+    fi
+    retries=$((retries + 1))
+    if [ $retries -lt $MAX_RETRIES ]; then
+      log "Retry $retries/$MAX_RETRIES for download: $url"
+      sleep $RETRY_DELAY
+    fi
+  done
+  log "ERROR: Failed to download after $MAX_RETRIES attempts: $url"
+  return 1
+}
+export -f wget_robust
+
+#  get_subfolders – fetch the list of sub‑folders for a "letter" URL
+get_subfolders() {
+  local base=$1
+  local content
+  
+  if ! content=$(curl_robust "$base"); then
+    log "ERROR: Failed to get subfolders from $base"
+    return 1
+  fi
+  
+  echo "$content" |
+    grep -oE '<a[^>]* href="([^"]+)"' |
+    sed -E 's/.*href="([^"]+)".*/\1/' |
+    grep -vE '^\.\.?$' |
+    while IFS= read -r sf; do
+      printf '%s/%s\n' "$base" "$sf"
+    done |
+    flock -x 202 cat >> "${TEMP_DIR}/subfolders.txt"
 }
 export -f get_subfolders
 
-# from the subfolder url we get the actual package url to download later
-function get_packages() 
-{
+#  get_packages – from a sub‑folder URL, extract package file names
+get_packages() {
   local subfolder_url=$1
   local pkgs
+  local content
+
+  if ! content=$(curl_robust "$subfolder_url"); then
+    log "ERROR: Failed to get packages from $subfolder_url"
+    return 1
+  fi
 
   case $DISTRO in
-    "ubuntu"|"debian")
-        pkgs=$(curl -s -L "$subfolder_url" |
-         grep -oE '<a href="[^"]+\.deb">[^<]+\.deb</a>' |
-         sed -r 's/<a href="([^"]+\.deb)">[^<]+<\/a>/\1/')
-        for p in $pkgs; do
-          add_url "$subfolder_url/$p"
-        done
+    ubuntu|debian)
+      pkgs=$(echo "$content" |
+            grep -oE '<a[^>]* href="[^"]+\.deb"' |
+            sed -E 's/.*href="([^"]+)".*/\1/')
       ;;
-    "fedora")
-      pkgs=$(curl -s -L "$subfolder_url" |
-             grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' |
-             sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
-      for p in $pkgs; do
-        add_url "$subfolder_url/$p"
-      done
+    fedora|rocky|centos)
+      pkgs=$(echo "$content" |
+            grep -oE '<a[^>]* href="[^"]+\.rpm"' |
+            sed -E 's/.*href="([^"]+)".*/\1/')
       ;;
-    "rocky")
-      pkgs=$(curl -s -L "$subfolder_url" | 
-            grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' |
-            sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
-        for p in $pkgs; do
-          add_url "$subfolder_url/$p"
-        done
+    arch)
+      pkgs=$(echo "$content" |
+            grep -oE '<a[^>]* href="[^"]+\.zst"' |
+            sed -E 's/.*href="([^"]+)".*/\1/')
       ;;
-    "centos")
-      pkgs=$(curl -s -L "$subfolder_url" | 
-            grep -oE '<a href="[^"]+\.rpm">[^<]+\.rpm</a>' | 
-            sed -r 's/<a href="([^"]+\.rpm)">[^<]+\.rpm<\/a>/\1/')
-      for p in $pkgs; do
-        add_url "$subfolder_url/$p"
-      done
-      ;;
-    "arch")
-      pkgs=$(curl -s -L "$subfolder_url" | 
-            grep -oE '<a href="[^"]+\.zst">[^<]+\.zst</a>' | 
-            sed -r 's/<a href="([^"]+\.zst)">[^<]+\.zst<\/a>/\1/')
-      for p in $pkgs; do
-        add_url "$subfolder_url/$p"
-      done
-      ;;
-    "alpine")
-      pkgs=$(curl -s -L "$subfolder_url" | 
-            grep -oE '<a href="[^"]+\.apk">[^<]+\.apk</a>' | 
-            sed -r 's/<a href="([^"]+\.apk)">[^<]+\.apk<\/a>/\1/')
-      for p in $pkgs; do
-        add_url "$subfolder_url/$p"
-      done
+    alpine)
+      pkgs=$(echo "$content" |
+            grep -oE '<a[^>]* href="[^"]+\.apk"' |
+            sed -E 's/.*href="([^"]+)".*/\1/')
       ;;
   esac
 
+  if [ -n "$pkgs" ]; then
+    while IFS= read -r p; do
+      [ -n "$p" ] && add_url "${subfolder_url}/${p}"
+    done <<<"$pkgs"
+  fi
 }
 export -f get_packages
 
-# Downloads packages, hashes them, saves it to urls.csv then throws away package data.
-function process_package() 
-{
+# Check if system has required tools
+check_dependencies() {
+  local missing_tools=()
+  
+  case $DISTRO in
+    ubuntu|debian)
+      command -v dpkg-deb >/dev/null || missing_tools+=("dpkg-deb")
+      ;;
+    fedora|rocky|centos)
+      command -v rpm2cpio >/dev/null || missing_tools+=("rpm2cpio")
+      command -v cpio >/dev/null || missing_tools+=("cpio")
+      command -v rpm >/dev/null || missing_tools+=("rpm")
+      ;;
+    arch)
+      command -v unzstd >/dev/null || missing_tools+=("unzstd")
+      ;;
+  esac
+  
+  command -v sha256sum >/dev/null || missing_tools+=("sha256sum")
+  command -v wget >/dev/null || missing_tools+=("wget")
+  command -v curl >/dev/null || missing_tools+=("curl")
+  command -v uuidgen >/dev/null || missing_tools+=("uuidgen")
+  
+  if [ ${#missing_tools[@]} -gt 0 ]; then
+    log "ERROR: Missing required tools: ${missing_tools[*]}"
+    exit 1
+  fi
+}
+export -f check_dependencies
+
+#  process_package – download, unpack, hash archive & files
+process_package() {
   local PACKAGE_URL=$1
 
-  # Get current state from looking up the PURL in our urls.csv
+  # -------------------  Check current state -------------------
   local cur_state
-  cur_state=$(awk -F, -v url="$PACKAGE_URL" '$1==url{print $2}' "${OUTPUT_DIR}/urls.csv")
-  
-  if [[ $cur_state != -1 ]]; then
-    # log "Skipping already‑processed $PACKAGE_URL (state=$cur_state)"
-    return
-  fi
+  cur_state=$(grep -m1 -F "$PACKAGE_URL" "${OUTPUT_DIR}/urls.csv" 2>/dev/null | cut -d, -f2 || echo -1)
+  [[ $cur_state == -1 ]] || return   # already processed / in‑progress
 
-  # start progress of downloading it
+  # -------------------  Mark as "downloading" -----------------
   set_state "$PACKAGE_URL" 0
-  # log "Downloading $PACKAGE_URL"
 
-  # wget our package and store it in a temp file. for any errors revert to -1 state
+  # -------------------  Download the package -----------------
   local PACKAGE=$(basename "$PACKAGE_URL")
   local PACKAGE_FILE="${TEMP_DIR}/${PACKAGE}"
 
-  if ! wget -q -O "$PACKAGE_FILE" "$PACKAGE_URL"; then
+  if ! wget_robust "$PACKAGE_URL" "$PACKAGE_FILE"; then
     log "ERROR: download failed – $PACKAGE_URL"
     set_state "$PACKAGE_URL" -1
     return
   fi
 
-  local PACKAGE_NAME
-  local PACKAGE_VERSION
-  # Give our package a unique id to do the unpacking
-  local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-  local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+  # -------------------  Unpack & extract name / version -------
+  local uniq_id PACKAGE_DIR PACKAGE_NAME PACKAGE_VERSION
+  uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM-$(date +%s)")
+  PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
+  mkdir -p "$PACKAGE_DIR"
 
-  # each distro differs in package extraction
   case $DISTRO in
-    "ubuntu"|"debian")
-      # Extract name / version (assumes name_version_arch.deb)
+    ubuntu|debian)
       PACKAGE_NAME=${PACKAGE%%_*}
       PACKAGE_VERSION=$(echo "$PACKAGE" | cut -d '_' -f 2)
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
+      if ! timeout 60 dpkg-deb -x "$PACKAGE_FILE" "$PACKAGE_DIR" 2>/dev/null; then
         log "ERROR: cannot extract $PACKAGE_FILE"
         rm -f "$PACKAGE_FILE"
         rm -rf "$PACKAGE_DIR"
@@ -185,14 +255,10 @@ function process_package()
         return
       fi
       ;;
-    "fedora")
-      # Extract name / version (assumes name_version_arch.deb)
-      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
-      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2/')
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
+    fedora|rocky|centos)
+      PACKAGE_NAME=$(rpm2cpio "$PACKAGE_FILE" 2>/dev/null | cpio -it 2>/dev/null | head -n1 | cut -d'-' -f1 2>/dev/null || echo "unknown")
+      PACKAGE_VERSION=$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$PACKAGE_FILE" 2>/dev/null || echo "unknown")
+      if ! timeout 60 bash -c "rpm2cpio '$PACKAGE_FILE' | cpio -idmv -D '$PACKAGE_DIR' 2>/dev/null"; then
         log "ERROR: cannot extract $PACKAGE_FILE"
         rm -f "$PACKAGE_FILE"
         rm -rf "$PACKAGE_DIR"
@@ -200,14 +266,10 @@ function process_package()
         return
       fi
       ;;
-    "rocky")
-      # Extract name / version (assumes name_version_arch.deb)
-      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
-      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
+    arch)
+      PACKAGE_NAME=$(basename "$PACKAGE" .zst | rev | cut -d'-' -f4- | rev)
+      PACKAGE_VERSION=$(basename "$PACKAGE" .zst | rev | cut -d'-' -f3-2 | rev)
+      if ! timeout 60 tar -I unzstd -xf "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
         log "ERROR: cannot extract $PACKAGE_FILE"
         rm -f "$PACKAGE_FILE"
         rm -rf "$PACKAGE_DIR"
@@ -215,48 +277,10 @@ function process_package()
         return
       fi
       ;;
-    "centos")
-      # Extract name, version, and release (format: name-version-release.dist.arch.rpm)
-      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\1/')
-      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]*)-([^-]+)\.[^.]+\.rpm/\2-\3/')
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! rrpm2cpio "$PACKAGE_FILE" | cpio -idmv; then
-        log "ERROR: cannot extract $PACKAGE_FILE"
-        rm -f "$PACKAGE_FILE"
-        rm -rf "$PACKAGE_DIR"
-        set_state "$PACKAGE_URL" -1
-        return
-      fi
-      ;;
-    "arch")
-      # Extract name / version (assumes name_version_arch.deb)
-      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\1/')
-      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([0-9][^-]+-[0-9]+)-[^-]+\.pkg\.tar\.zst/\2/')
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! tar -x --use-compress-program=unzstd -f "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
-        log "ERROR: cannot extract $PACKAGE_FILE"
-        rm -f "$PACKAGE_FILE"
-        rm -rf "$PACKAGE_DIR"
-        set_state "$PACKAGE_URL" -1
-        return
-      fi
-      ;;
-    "alpine")
-      # Extract name, version, and release (format: name-version-release.apk)
-      PACKAGE_NAME=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\1/')
-      PACKAGE_VERSION=$(echo "$PACKAGE" | sed -r 's/(.+)-([^-]+-r[0-9]+)\.apk/\2/')
-
-      # Give our package a unique id to do the unpacking
-      local uniq_id=$(uuidgen 2>/dev/null || echo "$$-$RANDOM")
-      local PACKAGE_DIR="${TEMP_DIR}/${PACKAGE}-${uniq_id}"
-
-      # Store and unpack
-      mkdir -p "$PACKAGE_DIR"
-      if ! tar -xzf "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
+    alpine)
+      PACKAGE_NAME=$(basename "$PACKAGE" .apk | rev | cut -d'-' -f3- | rev)
+      PACKAGE_VERSION=$(basename "$PACKAGE" .apk | rev | cut -d'-' -f2-1 | rev)
+      if ! timeout 60 tar -xzf "$PACKAGE_FILE" -C "$PACKAGE_DIR" 2>/dev/null; then
         log "ERROR: cannot extract $PACKAGE_FILE"
         rm -f "$PACKAGE_FILE"
         rm -rf "$PACKAGE_DIR"
@@ -265,300 +289,239 @@ function process_package()
       fi
       ;;
   esac
- 
-  
-  # Compute sha256sum of the archive (.deb or .gz)
-  local PKG_SHA=$(sha256sum "$PACKAGE_FILE" | cut -d' ' -f1)
 
-  # write to the packages.csv with the hash we got from the package alone
-  flock -x 200 -c "printf '%s,%s,%s,%s\n' \
-        \"$PACKAGE_NAME\" \"$PACKAGE_VERSION\" \"$PKG_SHA\" \"$PACKAGE_URL\" \
-        >> \"${OUTPUT_DIR}/packages.csv\""
+  # -------------------  Compute archive hash -----------------
+  local PKG_SHA
+  PKG_SHA=$(sha256sum "$PACKAGE_FILE" | cut -d' ' -f1)
 
-  # Traverse every file and calculate its sha256sum 
-  # (this is the most cpu intensive task for parallel processing that and I/O) 
-  # we also write to the files.csv to save each packages checksum
+  flock -x 200 -c "printf '%s,%s,%s,%s\n' \"$PACKAGE_NAME\" \"$PACKAGE_VERSION\" \"$PKG_SHA\" \"$PACKAGE_URL\" >> \"${OUTPUT_DIR}/packages.csv\""
+
+  # -------------------   Walk every file & record its hash -----
   while IFS= read -r -d '' f; do
-    local FILE_SHA=$(sha256sum "$f" | cut -d' ' -f1)
-    local REL_PATH="${f#$PACKAGE_DIR/}"
-    flock -x 201 -c "printf '%s,%s,%s,%s,%s\n' \
-          \"$PACKAGE_NAME\" \"$PACKAGE_VERSION\" \"$FILE_SHA\" \"$REL_PATH\" \"$PACKAGE_URL\" \
-          >> \"${OUTPUT_DIR}/files.csv\""
-  done < <(find "$PACKAGE_DIR" -type f -print0)
+    local FILE_SHA REL_PATH
+    FILE_SHA=$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1 || echo "error")
+    REL_PATH="${f#$PACKAGE_DIR/}"
+    flock -x 201 -c "printf '%s,%s,%s,%s,%s\n' \"$PACKAGE_NAME\" \"$PACKAGE_VERSION\" \"$FILE_SHA\" \"$REL_PATH\" \"$PACKAGE_URL\" >> \"${OUTPUT_DIR}/files.csv\""
+  done < <(find "$PACKAGE_DIR" -type f -print0 2>/dev/null)
 
-  # Once everything is completed we mark the state as 1
+  # -------------------   Mark as completed & clean up ---------
   set_state "$PACKAGE_URL" 1
-  # log "Finished $PACKAGE_URL"
-
-  # cleanup
   rm -f "$PACKAGE_FILE"
   rm -rf "$PACKAGE_DIR"
+  
+  log "Completed: $PACKAGE_NAME ($PACKAGE_VERSION)"
 }
 export -f process_package
 
+# Progress monitoring function
+show_progress() {
+  while true; do
+    sleep 30
+    if [ -f "${OUTPUT_DIR}/urls.csv" ]; then
+      local total=$(( $(wc -l < "${OUTPUT_DIR}/urls.csv") - 1 ))
+      local completed=$(awk -F, '$2==1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv" 2>/dev/null || echo "0")
+      local in_progress=$(awk -F, '$2==0{c++} END{print c}' "${OUTPUT_DIR}/urls.csv" 2>/dev/null || echo "0")
+      local failed=$(awk -F, '$2==-1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv" 2>/dev/null || echo "0")
+      
+      if [ "$total" -gt 0 ]; then
+        local percent=$((completed * 100 / total))
+        log "Progress: $completed/$total ($percent%) completed, $in_progress in progress, $failed failed"
+      fi
+    fi
+  done
+}
 
-# Main 
-
+#  MAIN
 log "Script started – $(date '+%Y-%m-%d %H:%M:%S')"
-log "Its recommended to run this in tmux or in the background, it will take a long time to process"
+log "It is recommended to run this inside tmux or as a background job."
 
-sleep 1
+# ------------------- Argument parsing -------------------
+DISTRO=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --distro) DISTRO=$2; shift 2 ;;
+    --processes) XARGS_PROCESSES=$2; shift 2 ;;
+    --timeout) TIMEOUT=$2; shift 2 ;;
+    --retries) MAX_RETRIES=$2; shift 2 ;;
+    -h|--help)
+      echo "Usage: $0 --distro <ubuntu|debian|fedora|rocky|centos|arch|alpine> [OPTIONS]"
+      echo "Options:"
+      echo "  --processes N    Number of parallel workers (default: $XARGS_PROCESSES)"
+      echo "  --timeout N      Timeout in seconds (default: $TIMEOUT)"
+      echo "  --retries N      Max retry attempts (default: $MAX_RETRIES)"
+      exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
 
-# take in argument for which distro 
-if [ "$#" -eq 0 ]; then
-    log "Need to pass in distro name (e.g. ubuntu, debian, fedora, rocky, centos, arch, alipine)"
-    log "Usage $0 --distro ubuntu"
-    exit 1
+if [[ -z $DISTRO ]]; then
+  log "Missing --distro argument"
+  exit 1
 fi
 
-log "$2"
+log "Selected distro: $DISTRO"
+log "Parallel workers: $XARGS_PROCESSES"
+log "Timeout: ${TIMEOUT}s"
+log "Max retries: $MAX_RETRIES"
 
-case $2 in
-  "ubuntu")
-    TEMP_DIR="ubuntu/temp"
-    OUTPUT_DIR="ubuntu/output"
-    DISTRO=$2
-    ;;
-  "debian")
-    TEMP_DIR="debian/temp"
-    OUTPUT_DIR="debian/output"
-    DISTRO=$2
-    ;;
-  "fedora")
-    TEMP_DIR="fedora/temp"
-    OUTPUT_DIR="fedora/output"
-    DISTRO=$2
-    ;;
-  "rocky")
-    TEMP_DIR="rocky/temp"
-    OUTPUT_DIR="rocky/output"
-    DISTRO=$2
-    ;;
-  "centos")
-    TEMP_DIR="centos/temp"
-    OUTPUT_DIR="centos/output"
-    DISTRO=$2
-    ;;
-  "arch")
-    TEMP_DIR="arch/temp"
-    OUTPUT_DIR="arch/output"
-    DISTRO=$2
-    ;;
-  "alpine")
-    TEMP_DIR="alpine/temp"
-    OUTPUT_DIR="alpine/output"
-    DISTRO=$2
-    ;;
-  *)
-    log "Not a supported distro"
-    exit 1
-    ;;
+# ------------------- Check dependencies -----------------
+check_dependencies
+
+# ------------------- Set per‑distro directories -------------
+case $DISTRO in
+  ubuntu)  TEMP_DIR="${SCRIPT_ROOT}/ubuntu/temp";   OUTPUT_DIR="${SCRIPT_ROOT}/ubuntu/output" ;;
+  debian)  TEMP_DIR="${SCRIPT_ROOT}/debian/temp";   OUTPUT_DIR="${SCRIPT_ROOT}/debian/output" ;;
+  fedora)  TEMP_DIR="${SCRIPT_ROOT}/fedora/temp";   OUTPUT_DIR="${SCRIPT_ROOT}/fedora/output" ;;
+  rocky)   TEMP_DIR="${SCRIPT_ROOT}/rocky/temp";    OUTPUT_DIR="${SCRIPT_ROOT}/rocky/output" ;;
+  centos)  TEMP_DIR="${SCRIPT_ROOT}/centos/temp";   OUTPUT_DIR="${SCRIPT_ROOT}/centos/output" ;;
+  arch)    TEMP_DIR="${SCRIPT_ROOT}/arch/temp";     OUTPUT_DIR="${SCRIPT_ROOT}/arch/output" ;;
+  alpine)  TEMP_DIR="${SCRIPT_ROOT}/alpine/temp";   OUTPUT_DIR="${SCRIPT_ROOT}/alpine/output" ;;
+  *) log "Unsupported distro: $DISTRO"; exit 1 ;;
 esac
 
-# going to be used in diff funcs
-export DISTRO
+export DISTRO TEMP_DIR OUTPUT_DIR
 
-# have essential dirs existing
-mkdir -p "$TEMP_DIR" "$OUTPUT_DIR"
+#  Open the lock files now that the directories are known
+open_locks
 
-# Initialise CSV files only once
-if [[ ! -s "${OUTPUT_DIR}/packages.csv" ]]; then
-  echo "name,version,sha256,url" > "${OUTPUT_DIR}/packages.csv"
-fi
-if [[ ! -s "${OUTPUT_DIR}/files.csv" ]]; then
-  echo "name,version,sha256,file,url" > "${OUTPUT_DIR}/files.csv"
-fi
-if [[ ! -s "${OUTPUT_DIR}/urls.csv" ]]; then
-  echo "url,state" > "${OUTPUT_DIR}/urls.csv"
-fi
+#  Ensure CSV headers exist (files are already opened)
+[[ -s "${OUTPUT_DIR}/packages.csv" ]] || echo "name,version,sha256,url" > "${OUTPUT_DIR}/packages.csv"
+[[ -s "${OUTPUT_DIR}/files.csv"    ]] || echo "name,version,sha256,file,url" > "${OUTPUT_DIR}/files.csv"
+[[ -s "${OUTPUT_DIR}/urls.csv"     ]] || echo "url,state" > "${OUTPUT_DIR}/urls.csv"
 
-# If URLs have already been discovered we can resume, otherwise build them
-if [[ -s "${OUTPUT_DIR}/urls.csv" && $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) -gt 0 ]]; then
+# Start progress monitoring in background
+show_progress &
+PROGRESS_PID=$!
+
+# Set up signal handlers for cleanup
+cleanup() {
+  log "Cleaning up..."
+  kill $PROGRESS_PID 2>/dev/null || true
+  
+  # Close file descriptors
+  exec 200>&- 2>/dev/null || true
+  exec 201>&- 2>/dev/null || true
+  exec 202>&- 2>/dev/null || true
+  exec 203>&- 2>/dev/null || true
+  exec 204>&- 2>/dev/null || true
+  
+  log "Script interrupted"
+  exit 1
+}
+trap cleanup INT TERM
+
+# ------------------- URL discovery (or resume) ------------
+if [[ -s "${OUTPUT_DIR}/urls.csv" && $(tail -n +2 "${OUTPUT_DIR}/urls.csv" 2>/dev/null | wc -l) -gt 0 ]]; then
   log "Resuming – URLs already discovered"
 else
-  # -------------------  BUILD LETTER LIST  ----------------------- #
-
+  log "Starting URL discovery..."
   LETTERS_FILE="${TEMP_DIR}/letters.txt"
-  >"$LETTERS_FILE"
+  : >"$LETTERS_FILE"
 
   case $DISTRO in
-    # ubuntu and debian run similar cause of their mirrors
-    "ubuntu")
+    ubuntu)
       for comp in "${UBUNTU_COMPONENTS[@]}"; do
         base="https://mirrors.kernel.org/ubuntu/pool/${comp}"
-        folders=$(curl -s -L "$base" |
-                  grep -oE '<a href="[^"]+">[^<]+</a>' |
-                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
-                  grep -vE '^\.$|^\.\.$|^\?')
-        for f in $folders; do
-          echo "$base/$f" >> "$LETTERS_FILE"
-        done
+        content=$(curl_robust "$base" || continue)
+        echo "$content" |
+          grep -oE '<a[^>]* href="([^"]+)"' |
+          sed -E 's/.*href="([^"]+)".*/\1/' |
+          grep -vE '^\.\.?$' |
+          while IFS= read -r f; do echo "$base/$f"; done >> "$LETTERS_FILE"
       done
-
-      # -------------------  GET SUBFOLDERS  ------------------------ #
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
-
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
-    "debian")
+    debian)
       for comp in "${DEBIAN_COMPONENTS[@]}"; do
         base="https://mirrors.edge.kernel.org/debian/pool/${comp}"
-        folders=$(curl -s -L "$base" |
-                  grep -oE '<a href="[^"]+">[^<]+</a>' |
-                  sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' |
-                  grep -vE '^\.$|^\.\.$|^\?')
-        for f in $folders; do
-          echo "$base/$f" >> "$LETTERS_FILE"
-        done
+        content=$(curl_robust "$base" || continue)
+        echo "$content" |
+          grep -oE '<a[^>]* href="([^"]+)"' |
+          sed -E 's/.*href="([^"]+)".*/\1/' |
+          grep -vE '^\.\.?$' |
+          while IFS= read -r f; do echo "$base/$f"; done >> "$LETTERS_FILE"
       done
-
-      # -------------------  GET SUBFOLDERS  ------------------------ #
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
-
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
-    "fedora")
-      # why cant all distros organize like FEDORA 
-      # -------------------  BUILD LETTER LIST  ----------------------- #
+    fedora)
       for type in "${FEDORA_TYPE[@]}"; do
         for version in "${FEDORA_VERSIONS[@]}"; do
-          if [ "$type" = "archive" ] && { [ "$version" == "41" ] || [ "$version" == "42" ]; } ; then
-            continue
-          fi
+          # skip archive for versions 41+ (as in original script)
+          if [[ "$type" == "archive" && "$version" =~ ^(41|42)$ ]]; then continue; fi
           base_url="https://download-ib01.fedoraproject.org/pub/${type}/fedora/linux/releases/${version}/Everything/x86_64/os/Packages/"
-          
-          # Get folders (letters)
-          folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-          
-          for folder in $folders; do
-            echo "$base_url/$folder" >> "$LETTERS_FILE"
-          done
-
+          content=$(curl_robust "$base_url" || continue)
+          echo "$content" |
+            grep -oE '<a[^>]* href="([^"]+)"' |
+            sed -E 's/.*href="([^"]+)".*/\1/' |
+            grep -vE '^\.\.?$' |
+            while IFS= read -r f; do echo "$base_url/$f"; done >> "$LETTERS_FILE"
         done
       done
-
-      # -------------------  GET SUBFOLDERS  ------------------------ #
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
-
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
-    "rocky")
-      # -------------------  BUILD LETTER LIST  ----------------------- #
+    rocky)
       for version in "${ROCKY_VERSIONS[@]}"; do
         base_url="https://dfw.mirror.rackspace.com/rocky/${version}/AppStream/x86_64/os/Packages/"
-        
-        # Get folders (letters)
-        folders=$(curl -s -L "$base_url" | grep -oE '<a href="[^"]+">[^<]+</a>' | sed -r 's/<a href="([^"]+)">[^<]+<\/a>/\1/' | grep -v '^\.$' | grep -v '^\.\.$' | grep -v '^?')
-        
-        for folder in $folders; do
-          echo "$base_url/$folder" >> "$LETTERS_FILE"
-        done
-
+        content=$(curl_robust "$base_url" || continue)
+        echo "$content" |
+          grep -oE '<a[^>]* href="([^"]+)"' |
+          sed -E 's/.*href="([^"]+)".*/\1/' |
+          grep -vE '^\.\.?$' |
+          while IFS= read -r f; do echo "$base_url/$f"; done >> "$LETTERS_FILE"
       done
-
-      # -------------------  GET SUBFOLDERS  ------------------------ #
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
-      cat "$LETTERS_FILE" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
-
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
-    "centos")
-      # ------------------- GET URLS ------------------- #
-      # it'll be slow but im so tired of trying to do everything in parallel, blame how its organized
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
+    centos)
       for version in "${CENTOS_VERSIONS[@]}"; do
-        echo "https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
+        echo "https://dfw.mirror.rackspace.com/centos-stream/${version}/AppStream/x86_64/os/Packages" >> "$LETTERS_FILE"
       done
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"'
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
       ;;
-    "arch")
-      # -------------------  GET SUBFOLDERS  ------------------------ #
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
-      echo "https://mirrors.edge.kernel.org/archlinux/pool/packages" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
-
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
+    arch)
+      echo "https://mirrors.edge.kernel.org/archlinux/pool/packages" >> "$LETTERS_FILE"
       ;;
-    "alpine")
-      # ------------------- GET URLS ------------------- #
-      # it'll be slow but im so tired of trying to do everything in parallel, blame how its organized
-      # Open lock for subfolders file (fd 202)
-      exec 202>>"${TEMP_DIR}/subfolders.txt"
+    alpine)
       for version in "${ALPINE_VERSIONS[@]}"; do
         for component in "${ALPINE_COMPONENTS[@]}"; do
-          echo "https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}"' > /dev/null
+          echo "https://mirrors.edge.kernel.org/alpine/${version}/${component}/x86_64" >> "$LETTERS_FILE"
         done
       done
-      # -------------------  GET PACKAGE URLs  ---------------------- #
-      # Open lock for URLs file (fd 203) – we will only append here
-      exec 203>>"${OUTPUT_DIR}/urls.csv"
-      cat "${TEMP_DIR}/subfolders.txt" | xargs -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}"' > /dev/null
-
-      log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" | wc -l) URLs recorded"
-
-      ;;
-    *)
-      log "Not a supported distro"
-      exit 1
       ;;
   esac
+
+  # ------------------- Subfolders -------------------------
+  log "Discovering subfolders..."
+  if [ -s "$LETTERS_FILE" ]; then
+    xargs -a "$LETTERS_FILE" -P "$XARGS_PROCESSES" -I {} bash -c 'get_subfolders "{}" || true'
+  fi
+
+  # ------------------- Package URLs -----------------------
+  log "Discovering package URLs..."
+  if [ -s "${TEMP_DIR}/subfolders.txt" ]; then
+    xargs -a "${TEMP_DIR}/subfolders.txt" -P "$XARGS_PROCESSES" -I {} bash -c 'get_packages "{}" || true'
+  fi
+
+  log "URL discovery finished – $(tail -n +2 "${OUTPUT_DIR}/urls.csv" 2>/dev/null | wc -l || echo 0) URLs recorded"
 fi
 
-# Open the lock‑file descriptors that will be used by the workers.
-# These stay open for the whole time until script is done
-exec 200>>"${OUTPUT_DIR}/packages.csv"
-exec 201>>"${OUTPUT_DIR}/files.csv"
-exec 204>>"${OUTPUT_DIR}/urls.csv"  
-
-# Download and calculate sha256sum of packages and subfiles in them in parallel
+# ------------------- Process packages in parallel ----------
 log "Starting parallel processing of packages (up to $XARGS_PROCESSES workers)"
-# Feed only the URL column (skip header)
-tail -n +2 "${OUTPUT_DIR}/urls.csv" | cut -d, -f1 |
-  xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}"' > /dev/null
+if [ -s "${OUTPUT_DIR}/urls.csv" ] && [ "$(tail -n +2 "${OUTPUT_DIR}/urls.csv" 2>/dev/null | wc -l)" -gt 0 ]; then
+  tail -n +2 "${OUTPUT_DIR}/urls.csv" | cut -d, -f1 |
+    xargs -P "$XARGS_PROCESSES" -I {} bash -c 'process_package "{}" || true'
+else
+  log "No URLs to process"
+fi
 
+# Stop progress monitoring
+kill $PROGRESS_PID 2>/dev/null || true
 
-# End result
-PKGS=$(( $(wc -l < "${OUTPUT_DIR}/packages.csv") - 1 ))
-FILES=$(( $(wc -l < "${OUTPUT_DIR}/files.csv") - 1 ))
-DONE=$(awk -F, '$2==1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv")
-log "Finished – $PKGS packages, $FILES files, $DONE URLs marked as completed"
+# ------------------- Final summary -------------------------
+PKGS=$(( $(wc -l < "${OUTPUT_DIR}/packages.csv" 2>/dev/null || echo 1) - 1 ))
+FILES=$(( $(wc -l < "${OUTPUT_DIR}/files.csv" 2>/dev/null || echo 1) - 1 ))
+DONE=$(awk -F, '$2==1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv" 2>/dev/null || echo 0)
+FAILED=$(awk -F, '$2==-1{c++} END{print c}' "${OUTPUT_DIR}/urls.csv" 2>/dev/null || echo 0)
+log "Finished – $PKGS packages, $FILES files, $DONE URLs completed, $FAILED failed"
 
-rm 200 201 202 203 204
+# ------------------- Clean‑up (close descriptors) ----------
+exec 200>&- 2>/dev/null || true
+exec 201>&- 2>/dev/null || true
+exec 202>&- 2>/dev/null || true
+exec 203>&- 2>/dev/null || true
+exec 204>&- 2>/dev/null || true
+
