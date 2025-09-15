@@ -5,6 +5,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const tableBody = document.querySelector("#resultTable tbody");
     const headers   = document.querySelectorAll("#resultTable th");
     const pagerDiv  = document.getElementById("pager");
+    const sourceSelect = document.getElementById("sourceSelect");
 
     // -----------------------------------------------------------------
     // Pagination state
@@ -29,6 +30,8 @@ document.addEventListener("DOMContentLoaded", () => {
             page: currentPage,
             limit: pageSize
         });
+        params.append("source", sourceSelect.value);
+
 
         const resp = await fetch(`/api/search?${params}`);
         if (!resp.ok) {
@@ -39,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
         totalRows = data.total;
         renderRows(data.results);
         renderPager();
+        
     }
 
     // -----------------------------------------------------------------

@@ -15,9 +15,15 @@
     </style>
 </head>
 <body>
-    <h1>Search CSV</h1>
+    <h1>Linux Package Hash CSV Search & Sort</h1>
     <input type="text" id="searchBox" placeholder="Enter search term…" style="width:300px;padding:5px;">
     <button id="searchBtn">Search</button>
+
+    <select id="sourceSelect">
+    {% for src in sources %}
+        <option value="{{ src }}">{{ src }}</option>
+    {% endfor %}
+    </select>
 
     <br><br>
 

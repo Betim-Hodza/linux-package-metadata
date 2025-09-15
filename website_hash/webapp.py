@@ -1,111 +1,98 @@
-# app_sqlite.py
-import os
-import sqlite3
-from flask import Flask, jsonify, request, render_template, abort, g
+# app_multi_sqlite.py
+import os, sqlite3
+from flask import Flask, jsonify, request, render_template, g, abort
 
 app = Flask(__name__)
 
-# -------------------------------------------------
-# Configuration
-# -------------------------------------------------
-DB_PATH = os.path.join(os.path.dirname(__file__), "data.db")
+# -----------------------------------------------------------------
+# Configuration – list every CSV‑derived DB you want to expose
+# -----------------------------------------------------------------
+DB_FILES = {
+    "data1": "data1.db",
+    # "data2": "data2.db",
+    # add more: "name": "filename.db"
+}
 COLUMNS = ["name", "version", "sha256", "file", "url"]
 TABLE   = "files"
-DEFAULT_LIMIT = 50          # rows per page (adjust as you like)
+DEFAULT_LIMIT = 50
 
-# -------------------------------------------------
-# SQLite connection handling (per‑request)
-# -------------------------------------------------
-def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row   # dict‑like access
-    return g.db
+# -----------------------------------------------------------------
+# Helper – open a connection and ATTACH all DBs once per request
+# -----------------------------------------------------------------
+def get_conn():
+    if "conn" not in g:
+        conn = sqlite3.connect(":memory:")          # in‑memory master DB
+        conn.row_factory = sqlite3.Row
+        # Attach each physical DB under its own schema name
+        for alias, path in DB_FILES.items():
+            conn.execute(f"ATTACH DATABASE '{os.path.abspath(path)}' AS {alias}")
+        g.conn = conn
+    return g.conn
 
 @app.teardown_appcontext
-def close_db(exc):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+def close_conn(exc):
+    conn = g.pop("conn", None)
+    if conn:
+        conn.close()
 
-# -------------------------------------------------
-# Helper: build WHERE clause for free‑text search
-# -------------------------------------------------
-def build_search_clause(term: str):
-    """Return (sql, params) that matches term in ANY column (case‑insensitive)."""
+# -----------------------------------------------------------------
+# Build WHERE clause (same as before)
+# -----------------------------------------------------------------
+def build_search_clause(term):
     if not term:
         return "", ()
     term_like = f"%{term.lower()}%"
-    conditions = [f"LOWER({col}) LIKE ?" for col in COLUMNS]
-    sql = "WHERE " + " OR ".join(conditions)
-    params = tuple(term_like for _ in COLUMNS)
-    return sql, params
+    cond = " OR ".join([f"LOWER({c}) LIKE ?" for c in COLUMNS])
+    return f"WHERE {cond}", tuple(term_like for _ in COLUMNS)
 
-# -------------------------------------------------
-# API: /api/search
-# -------------------------------------------------
+# -----------------------------------------------------------------
+# API – now you can query any attached DB via a `source` param
+# -----------------------------------------------------------------
 @app.route("/api/search")
 def api_search():
-    """
-    Query parameters
-    ----------------
-    q        : free‑text term (optional)
-    sort_by  : column name (default: name)
-    order    : asc|desc (default: asc)
-    page     : 1‑based page number (default: 1)
-    limit    : rows per page (default: 50)
-    """
     q       = request.args.get("q", "").strip().lower()
     sort_by = request.args.get("sort_by", "name")
     order   = request.args.get("order", "asc").lower()
     page    = max(int(request.args.get("page", 1)), 1)
     limit   = max(int(request.args.get("limit", DEFAULT_LIMIT)), 1)
+    source  = request.args.get("source", "data1")   # default DB
 
+    if source not in DB_FILES:
+        abort(400, f"Unknown source – choose from {list(DB_FILES)}")
     if sort_by not in COLUMNS:
-        abort(400, description=f"Invalid sort_by column. Choose from {COLUMNS}")
+        abort(400, f"Invalid sort_by – choose from {COLUMNS}")
     if order not in ("asc", "desc"):
-        abort(400, description="order must be 'asc' or 'desc'")
+        abort(400, "order must be asc or desc")
 
     offset = (page - 1) * limit
-
     where_sql, where_params = build_search_clause(q)
 
-    # Main query – fetch only the slice we need
     sql = f"""
         SELECT {', '.join(COLUMNS)}
-        FROM {TABLE}
+        FROM {source}.{TABLE}
         {where_sql}
         ORDER BY {sort_by} {order.upper()}
         LIMIT ? OFFSET ?
     """
     params = (*where_params, limit, offset)
 
-    db = get_db()
-    rows = db.execute(sql, params).fetchall()
-
-    # Optional: total count for UI pagination
-    count_sql = f"SELECT COUNT(*) FROM {TABLE} {where_sql}"
-    total = db.execute(count_sql, where_params).fetchone()[0]
-
-    # Convert sqlite.Row objects to plain dicts
-    data = [dict(row) for row in rows]
+    conn = get_conn()
+    rows = conn.execute(sql, params).fetchall()
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM {source}.{TABLE} {where_sql}", where_params
+    ).fetchone()[0]
 
     return jsonify({
+        "source": source,
         "page": page,
         "limit": limit,
         "total": total,
-        "results": data
+        "results": [dict(r) for r in rows]
     })
 
-# -------------------------------------------------
-# UI – unchanged (still uses index.html)
-# -------------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html", columns=COLUMNS)
+    return render_template("index.html", columns=COLUMNS, sources=list(DB_FILES))
 
-# -------------------------------------------------
-# Run
-# -------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
