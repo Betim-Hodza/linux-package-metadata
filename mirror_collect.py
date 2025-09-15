@@ -253,14 +253,14 @@ def main():
 
     # ---- Alpine ---------------------------------------------------------
     alpine_urls = [
-        ALPINE_3_18_M_URL, ALPINE_3_18_R_URL, ALPINE_3_18_C_URL,
-        ALPINE_3_19_M_URL, ALPINE_3_19_R_URL, ALPINE_3_19_C_URL,
-        ALPINE_3_2_M_URL,  ALPINE_3_2_R_URL,  ALPINE_3_2_C_URL,
-        ALPINE_3_20_M_URL, ALPINE_3_20_R_URL, ALPINE_3_20_C_URL,
-        ALPINE_3_21_M_URL, ALPINE_3_21_R_URL, ALPINE_3_21_C_URL,
-        ALPINE_3_22_M_URL, ALPINE_3_22_R_URL, ALPINE_3_22_C_URL,
-        ALPINE_S_M_URL,    ALPINE_S_R_URL,    ALPINE_S_C_URL,
-        ALPINE_E_M_URL,    ALPINE_E_R_URL,    ALPINE_E_C_URL,
+        ALPINE_3_18_M_URL,
+        ALPINE_3_19_M_URL,
+        ALPINE_3_2_M_URL, 
+        ALPINE_3_20_M_URL,
+        ALPINE_3_21_M_URL,
+        ALPINE_3_22_M_URL,
+        ALPINE_S_M_URL,   
+        ALPINE_E_M_URL,   
     ]
     for u in alpine_urls:
         scrape_all_links(u, max_depth=10, distro="alpine")
