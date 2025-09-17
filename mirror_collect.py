@@ -215,7 +215,7 @@ def main():
     spinner.daemon = True
     spinner.start()
 
-    logging.basicConfig(filename=f'PURL_Scraper_{args.distro}.log', level=logging.debug, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(format='%(levelname)s:%(message)s', filename=f'PURL_Scraper_{args.distro}.log', level=logging.DEBUG) 
 
     match args.distro:
         case "ubuntu":
