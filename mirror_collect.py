@@ -136,6 +136,7 @@ def scrape_all_links(base_url: str, max_depth: int = 10, distro: str = "generic"
             resp.raise_for_status()
         except Exception as exc:
             print(f"ERROR fetching {cur_url}: {exc}", file=sys.stderr)
+            logging.ERROR(f"fetching {cur_url}: {exc}", file=sys.stderr)
             continue
 
         # Some mirrors return a plain‑text directory listing with a
@@ -143,6 +144,7 @@ def scrape_all_links(base_url: str, max_depth: int = 10, distro: str = "generic"
         ct = resp.headers.get("Content-Type", "")
         if "text/html" not in ct.lower():
             # Not HTML → nothing to parse, just skip.
+            logging.DEBUG(f"{ct} is Not html, skipping...")
             continue
 
         # Parse the HTML – be tolerant to odd markup
@@ -155,6 +157,7 @@ def scrape_all_links(base_url: str, max_depth: int = 10, distro: str = "generic"
             except Exception:
                 # Give up on this page – it’s not worth crashing the whole run
                 print(f"WARNING: could not parse {cur_url}", file=sys.stderr)
+                logging.warning(f"could not parse {cur_url}", file=sys.stderr)
                 continue
 
         # Walk all <a> links
@@ -219,6 +222,7 @@ def main():
 
     match args.distro:
         case "ubuntu":
+            logging.info('processing finding ubuntu PURLS')
             ubuntu_urls = [
                 UBUNTU_MAIN_URL,
                 UBUNTU_RESTRICTED_URL,
@@ -228,12 +232,15 @@ def main():
             for u in ubuntu_urls:
                 scrape_all_links(u, max_depth=10, distro="ubuntu")
         case "debian":
+            logging.info('processing finding debian PURLS')
             for u in (DEBIAN_URL, DEBIAN_NONFREE_URL):
                 scrape_all_links(u, max_depth=10, distro="debian")
         case "centos":
+            logging.info('processing finding centos PURLS')
             for u in (CENTOS_9_URL, CENTOS_10_URL):
                 scrape_all_links(u, max_depth=10, distro="centos")
         case "rocky":
+            logging.info('processing finding rocky PURLS')
             rocky_urls = [
                 ROCKY_8_5_URL, ROCKY_8_6_URL, ROCKY_8_7_URL, ROCKY_8_8_URL,
                 ROCKY_8_9_URL, ROCKY_9_0_URL, ROCKY_9_1_URL,
@@ -243,6 +250,7 @@ def main():
             for u in rocky_urls:
                 scrape_all_links(u, max_depth=10, distro="rocky")
         case "fedora":
+            logging.info('processing finding fedora PURLS')
             fedora_urls = [
                 FEDORA_38_URL, FEDORA_39_URL, FEDORA_40_URL,
                 FEDORA_41_URL, FEDORA_42_URL,
@@ -250,6 +258,7 @@ def main():
             for u in fedora_urls:
                 scrape_all_links(u, max_depth=10, distro="fedora")
         case "alpine":
+            logging.info('processing finding alpine PURLS')
             alpine_urls = [
                 ALPINE_3_18_M_URL,
                 ALPINE_3_19_M_URL,
@@ -263,6 +272,7 @@ def main():
             for u in alpine_urls:
                 scrape_all_links(u, max_depth=10, distro="alpine")
         case "arch":
+            logging.info('processing finding arch PURLS')
             scrape_all_links(ARCH, 10, "arch")
 
     # stop our spinner we are done
