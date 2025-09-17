@@ -51,14 +51,14 @@ FEDORA_40_URL = "https://download-ib01.fedoraproject.org/pub/archive/fedora/linu
 FEDORA_41_URL = "https://download-ib01.fedoraproject.org/pub/fedora/linux/releases/41/Everything/x86_64/os/Packages/"
 FEDORA_42_URL = "https://download-ib01.fedoraproject.org/pub/fedora/linux/releases/42/Everything/x86_64/os/Packages/"
 
-ALPINE_3_18_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.18/main/x86_64"
-ALPINE_3_19_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.19/main/x86_64"
-ALPINE_3_2_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.2/main/x86_64"
-ALPINE_3_20_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.20/main/x86_64"
-ALPINE_3_21_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.21/main/x86_64"
-ALPINE_3_22_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.22/main/x86_64"
-ALPINE_S_M_URL = "https://mirrors.edge.kernel.org/alpine/latest-stable/main/x86_64"
-ALPINE_E_M_URL = "https://mirrors.edge.kernel.org/alpine/edge/main/x86_64"
+ALPINE_3_18_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.18/main/x86_64/"
+ALPINE_3_19_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.19/main/x86_64/"
+ALPINE_3_2_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.2/main/x86_64/"
+ALPINE_3_20_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.20/main/x86_64/"
+ALPINE_3_21_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.21/main/x86_64/"
+ALPINE_3_22_M_URL = "https://mirrors.edge.kernel.org/alpine/v3.22/main/x86_64/"
+ALPINE_S_M_URL = "https://mirrors.edge.kernel.org/alpine/latest-stable/main/x86_64/"
+ALPINE_E_M_URL = "https://mirrors.edge.kernel.org/alpine/edge/main/x86_64/"
 
 # rolling release distro doesnt have any versions to deal with
 ARCH = "https://mirrors.edge.kernel.org/archlinux/pool/packages/"
