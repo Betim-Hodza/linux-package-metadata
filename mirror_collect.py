@@ -144,7 +144,7 @@ def scrape_all_links(base_url: str, max_depth: int = 10, distro: str = "generic"
         ct = resp.headers.get("Content-Type", "")
         if "text/html" not in ct.lower():
             # Not HTML → nothing to parse, just skip.
-            logging.DEBUG(f"{ct} is Not html, skipping...")
+            logging.DEBUG(f"Not html, skipping...")
             continue
 
         # Parse the HTML – be tolerant to odd markup
