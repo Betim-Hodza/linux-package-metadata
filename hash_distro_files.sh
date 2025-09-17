@@ -222,7 +222,7 @@ process_package() {
   # -------------------  Check current state -------------------
   local cur_state
   cur_state=$(grep -m1 -F "$PACKAGE_URL" "${OUTPUT_DIR}/urls.csv" 2>/dev/null | cut -d, -f2 || echo -1)
-  [[ $cur_state == -1 ]] || return   # already processed / in‑progress
+  [[ $cur_state != -1 ]] || return   # already processed / in‑progress
 
   # -------------------  Mark as "downloading" -----------------
   set_state "$PACKAGE_URL" 0
